@@ -1,4 +1,4 @@
-<!-- build: 2026-08-11-4 -->
+<!-- build: 2026-08-11-5 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -1198,7 +1198,7 @@ async function submitRecall() {
       .select('*').eq('challenge_id', memoryChallenge.id).order('correct_count', { ascending: false });
     plays = data || [];
     const { data: boardData } = await sb.from('wortspiel_players')
-      .select('id,nickname,memory_xp').order('memory_xp', { ascending: false }).limit(10);
+      .select('id,nickname,memory_xp').gt('memory_xp', 0).order('memory_xp', { ascending: false }).limit(10);
     overallBoard = boardData || [];
   }
 
@@ -1593,7 +1593,7 @@ async function finishCardRound() {
       .select('*').eq('challenge_id', cardmemChallenge.id).order('moves', { ascending: true });
     plays = data || [];
     const { data: boardData } = await sb.from('wortspiel_players')
-      .select('id,nickname,card_memory_xp').order('card_memory_xp', { ascending: false }).limit(10);
+      .select('id,nickname,card_memory_xp').gt('card_memory_xp', 0).order('card_memory_xp', { ascending: false }).limit(10);
     overallBoard = boardData || [];
   }
 
