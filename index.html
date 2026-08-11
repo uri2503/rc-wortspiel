@@ -155,7 +155,38 @@
   .board-section-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--ink); margin: 0 0 12px; text-align: center; }
   .board-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 
-  #play-view.hidden, #board-view.hidden { display: none; }
+  #play-view.hidden, #board-view.hidden, #memory-view.hidden { display: none; }
+
+  .memory-items { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
+  .memory-card {
+    min-width: 110px; padding: 16px 18px; border-radius: 14px;
+    background: var(--tile); border: 2px solid var(--tile-border);
+    box-shadow: 0 3px 0 var(--tile-shadow);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-display); font-weight: 700; font-size: 22px; color: var(--ink);
+    animation: tileIn 0.45s ease both; text-align: center;
+  }
+  .memory-card.hidden-card { color: var(--ink-soft); font-size: 30px; background: var(--panel); }
+  .memory-prompt { text-align: center; margin-bottom: 20px; }
+  .memory-prompt .big { font-family: var(--font-display); font-weight: 700; font-size: 26px; color: var(--ink); margin-bottom: 6px; }
+  .memory-prompt .sub { color: var(--ink-soft); font-size: 15px; }
+  .memory-letter-input {
+    display: block; margin: 14px auto; width: 90px; text-align: center;
+    font-size: 32px; font-family: var(--font-display); font-weight: 700;
+    padding: 10px; border-radius: 14px; border: 2px solid var(--tile-border);
+    text-transform: uppercase;
+  }
+  .memory-recall-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+  @media (max-width: 460px) { .memory-recall-grid { grid-template-columns: 1fr; } }
+  .memory-recall-input {
+    font-size: 17px; padding: 12px 16px; border-radius: 12px;
+    border: 2px solid var(--tile-border); background: #fff; color: var(--ink);
+    font-family: var(--font-body);
+  }
+  .memory-recall-input.correct { border-color: var(--sage); background: var(--sage-bg); }
+  .memory-recall-input.wrong { border-color: var(--amber); background: var(--amber-bg); }
+  .memory-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
+  .memory-reveal-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 
   .player-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--ink-soft); margin-bottom: 12px; }
   .link-btn { background: none; border: none; color: var(--sage-dark); font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; font-family: var(--font-body); }
@@ -186,6 +217,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tab-play">▶️ Spielen</button>
     <button class="tab-btn" id="tab-board">🏆 Bestenliste</button>
+    <button class="tab-btn" id="tab-memory">🧠 Gedächtnis</button>
   </div>
 
   <div id="play-view">
@@ -247,6 +279,10 @@
 
   <div id="board-view" class="hidden">
     <div id="board-content"></div>
+  </div>
+
+  <div id="memory-view" class="hidden">
+    <div id="memory-content"></div>
   </div>
 
 </div>
@@ -420,9 +456,12 @@ const $newRoundBtn = document.getElementById('new-round-btn');
 const $newChallengeBtn = document.getElementById('new-challenge-btn');
 const $tabPlay = document.getElementById('tab-play');
 const $tabBoard = document.getElementById('tab-board');
+const $tabMemory = document.getElementById('tab-memory');
 const $playView = document.getElementById('play-view');
 const $boardView = document.getElementById('board-view');
+const $memoryView = document.getElementById('memory-view');
 const $boardContent = document.getElementById('board-content');
+const $memoryContent = document.getElementById('memory-content');
 
 /* ---------------- Rendering ---------------- */
 function renderTiles() {
@@ -878,6 +917,319 @@ function speakLetters() {
   window.speechSynthesis.speak(utter);
 }
 
+/* ---------------- Memory game ---------------- */
+// Item generation is pluggable by type (word today; number/color can be added
+// later as further difficulty levels without touching the schema or scoring).
+const MEMORY_ITEM_COUNT = 6;
+const MEMORY_LEVELS = {
+  easy: { types: ['word'], wordMinLen: 4, wordMaxLen: 6 },
+};
+const memoryLevel = 'easy';
+
+function pickMemoryWordPool(minLen, maxLen) {
+  const pool = [];
+  WORDS.forEach(w => {
+    if (w.length >= minLen && w.length <= maxLen && /^[a-zäöüß]+$/.test(w)) pool.push(w);
+  });
+  return pool;
+}
+
+function generateMemoryItems(count) {
+  const level = MEMORY_LEVELS[memoryLevel];
+  const pool = pickMemoryWordPool(level.wordMinLen, level.wordMaxLen);
+  const items = [];
+  const usedIdx = new Set();
+  while (items.length < count && usedIdx.size < pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    if (usedIdx.has(idx)) continue;
+    usedIdx.add(idx);
+    items.push(pool[idx]);
+  }
+  return items;
+}
+
+function generateDistractor() {
+  const position = 1 + Math.floor(Math.random() * 26);
+  const answer = String.fromCharCode(64 + position); // 'A'..'Z'
+  return { position, answer };
+}
+
+let memoryPhase = 'idle'; // idle | loading | memorize | distractor | recall | result
+let memoryChallenge = null;
+let memoryDistractorInput = '';
+let memoryDistractorResult = null; // null | true | false
+let memoryRecallValues = new Array(MEMORY_ITEM_COUNT).fill('');
+let memoryResultData = null;
+
+async function getCurrentMemoryChallenge() {
+  if (!sb) return null;
+  const { data: existing, error: selErr } = await sb.from('wortspiel_memory_challenges')
+    .select('*').order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (selErr) { console.error(selErr); return null; }
+  if (existing) return existing;
+  return createMemoryChallenge();
+}
+
+async function createMemoryChallenge() {
+  if (!sb) return null;
+  const items = generateMemoryItems(MEMORY_ITEM_COUNT);
+  const { position, answer } = generateDistractor();
+  const row = { items, distractor_position: position, distractor_answer: answer };
+  const { data, error } = await sb.from('wortspiel_memory_challenges').insert(row).select().maybeSingle();
+  if (error) { console.error(error); return null; }
+  return data;
+}
+
+async function startMemoryExercise() {
+  memoryDistractorInput = '';
+  memoryDistractorResult = null;
+  memoryRecallValues = new Array(MEMORY_ITEM_COUNT).fill('');
+  memoryResultData = null;
+  memoryPhase = 'loading';
+  renderMemoryView();
+  memoryChallenge = await getCurrentMemoryChallenge();
+  if (!memoryChallenge) {
+    memoryPhase = 'idle';
+    renderMemoryView('Übung konnte nicht geladen werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  memoryPhase = 'memorize';
+  renderMemoryView();
+}
+
+async function startNewMemoryExercise() {
+  if (!sb) return;
+  const ok = window.confirm('Neue Merk-Übung mit neuen Begriffen starten? Alle, die ab jetzt mitspielen, bekommen diese neue Runde statt der bisherigen.');
+  if (!ok) return;
+  memoryPhase = 'loading';
+  renderMemoryView();
+  const created = await createMemoryChallenge();
+  if (!created) {
+    memoryPhase = 'idle';
+    renderMemoryView('Neue Übung konnte nicht erstellt werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  memoryChallenge = created;
+  memoryDistractorInput = '';
+  memoryDistractorResult = null;
+  memoryRecallValues = new Array(MEMORY_ITEM_COUNT).fill('');
+  memoryResultData = null;
+  memoryPhase = 'memorize';
+  renderMemoryView();
+}
+
+function confirmMemorized() {
+  memoryPhase = 'distractor';
+  renderMemoryView();
+}
+
+function submitDistractorAnswer() {
+  const $input = document.getElementById('memory-distractor-input');
+  const val = ($input ? $input.value : memoryDistractorInput).trim().toUpperCase();
+  memoryDistractorInput = val;
+  memoryDistractorResult = val === memoryChallenge.distractor_answer.toUpperCase();
+  renderMemoryView();
+}
+
+function proceedToRecall() {
+  memoryPhase = 'recall';
+  renderMemoryView();
+}
+
+async function submitRecall() {
+  const inputs = Array.from(document.querySelectorAll('.memory-recall-input'));
+  const recalled = inputs.map(inp => inp.value.trim());
+  memoryRecallValues = recalled;
+
+  const targetPool = memoryChallenge.items.map(w => w.toLowerCase());
+  const itemMatched = new Array(targetPool.length).fill(false);
+  recalled.forEach(v => {
+    const lv = v.toLowerCase();
+    if (!lv) return;
+    const targetIdx = targetPool.findIndex((t, i) => t === lv && !itemMatched[i]);
+    if (targetIdx !== -1) itemMatched[targetIdx] = true;
+  });
+  const correctCount = itemMatched.filter(Boolean).length;
+
+  memoryPhase = 'loading';
+  renderMemoryView();
+
+  const p = await ensurePlayer();
+  let plays = [];
+  let myRecord = null;
+  if (p) {
+    const { data: existing } = await sb.from('wortspiel_memory_plays')
+      .select('*').eq('challenge_id', memoryChallenge.id).eq('player_id', p.id).maybeSingle();
+    if (!existing || correctCount > existing.correct_count) {
+      const row = {
+        challenge_id: memoryChallenge.id, player_id: p.id, nickname: p.nickname,
+        correct_count: correctCount, recalled_items: recalled,
+        distractor_correct: !!memoryDistractorResult,
+        updated_at: new Date().toISOString(),
+      };
+      const { data: upserted, error } = await sb.from('wortspiel_memory_plays')
+        .upsert(row, { onConflict: 'challenge_id,player_id' }).select().maybeSingle();
+      if (error) console.error(error);
+      myRecord = upserted || row;
+    } else {
+      myRecord = existing;
+    }
+    const { data } = await sb.from('wortspiel_memory_plays')
+      .select('*').eq('challenge_id', memoryChallenge.id).order('correct_count', { ascending: false });
+    plays = data || [];
+  }
+
+  memoryResultData = { correctCount, itemMatched, recalled, myRecord, plays, saved: !!p };
+  memoryPhase = 'result';
+  renderMemoryView();
+}
+
+function renderMemoryPlayerRow() {
+  const $row = document.getElementById('memory-player-row');
+  if (!$row) return;
+  if (player && player.nickname) {
+    $row.innerHTML = '👤 ' + escapeHtml(player.nickname) + ' <button type="button" class="link-btn" id="memory-change-nickname-btn">Spitzname ändern</button>';
+  } else {
+    $row.innerHTML = 'Noch kein Spitzname gewählt <button type="button" class="link-btn" id="memory-change-nickname-btn">Spitzname wählen</button>';
+  }
+  document.getElementById('memory-change-nickname-btn').addEventListener('click', async () => {
+    await renameNickname();
+    renderMemoryPlayerRow();
+  });
+}
+
+function renderMemoryView(errorMessage) {
+  if (!$memoryContent) return;
+
+  if (memoryPhase === 'loading') {
+    $memoryContent.innerHTML = '<p class="board-empty">Lädt …</p>';
+    return;
+  }
+
+  if (memoryPhase === 'idle') {
+    $memoryContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">🧠 Gedächtnistraining</span><br>' +
+      '<span class="sub">Merk dir ' + MEMORY_ITEM_COUNT + ' Begriffe, löse eine kurze Zwischenaufgabe und gib sie danach aus dem Gedächtnis wieder ein.</span></p>' +
+      (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
+      '<div class="memory-actions"><button class="btn-primary" id="memory-start-btn">Übung starten</button></div>' +
+      '<div id="memory-player-row" class="player-row" style="display:flex;"></div>';
+    document.getElementById('memory-start-btn').addEventListener('click', startMemoryExercise);
+    renderMemoryPlayerRow();
+    return;
+  }
+
+  if (!memoryChallenge) { $memoryContent.innerHTML = '<p class="board-empty">Keine aktive Übung.</p>'; return; }
+
+  if (memoryPhase === 'memorize') {
+    const cards = memoryChallenge.items.map(item => '<div class="memory-card">' + escapeHtml(item) + '</div>').join('');
+    $memoryContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Merk dir diese ' + memoryChallenge.items.length + ' Begriffe</span><br>' +
+      '<span class="sub">Nimm dir so viel Zeit, wie du brauchst.</span></p>' +
+      '<div class="memory-items">' + cards + '</div>' +
+      '<div class="memory-actions"><button class="btn-primary" id="memory-memorized-btn">✅ Ich hab sie mir gemerkt</button></div>';
+    document.getElementById('memory-memorized-btn').addEventListener('click', confirmMemorized);
+    return;
+  }
+
+  if (memoryPhase === 'distractor') {
+    const hiddenCards = memoryChallenge.items.map(() => '<div class="memory-card hidden-card">•••</div>').join('');
+    const feedback = memoryDistractorResult === null ? '' :
+      memoryDistractorResult
+        ? '<p class="resolution-sub" style="text-align:center;color:var(--sage-dark);">Richtig! „' + memoryChallenge.distractor_answer + '“</p>'
+        : '<p class="resolution-sub" style="text-align:center;color:var(--amber);">Nicht ganz – richtig wäre „' + memoryChallenge.distractor_answer + '“.</p>';
+    $memoryContent.innerHTML =
+      '<div class="memory-items">' + hiddenCards + '</div>' +
+      '<p class="memory-prompt"><span class="big">Kurze Zwischenaufgabe</span><br>' +
+      '<span class="sub">Wie lautet der ' + memoryChallenge.distractor_position + '. Buchstabe im Alphabet?</span></p>' +
+      '<input id="memory-distractor-input" class="memory-letter-input" maxlength="1" autocomplete="off" ' +
+        (memoryDistractorResult !== null ? 'disabled' : '') + ' value="' + escapeHtml(memoryDistractorInput) + '">' +
+      feedback +
+      '<div class="memory-actions">' +
+        (memoryDistractorResult === null
+          ? '<button class="btn-primary" id="memory-distractor-submit">Bestätigen</button>'
+          : '<button class="btn-primary" id="memory-continue-btn">Weiter zur Abfrage</button>') +
+      '</div>';
+    if (memoryDistractorResult === null) {
+      const $input = document.getElementById('memory-distractor-input');
+      $input.focus();
+      document.getElementById('memory-distractor-submit').addEventListener('click', submitDistractorAnswer);
+      $input.addEventListener('keydown', e => { if (e.key === 'Enter') submitDistractorAnswer(); });
+    } else {
+      document.getElementById('memory-continue-btn').addEventListener('click', proceedToRecall);
+    }
+    return;
+  }
+
+  if (memoryPhase === 'recall') {
+    const inputs = memoryChallenge.items.map((_, i) =>
+      '<input class="memory-recall-input" type="text" autocomplete="off" placeholder="Begriff ' + (i + 1) + '" value="' + escapeHtml(memoryRecallValues[i] || '') + '">'
+    ).join('');
+    $memoryContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Jetzt aus dem Gedächtnis</span><br>' +
+      '<span class="sub">Gib die ' + memoryChallenge.items.length + ' Begriffe von vorhin ein (Reihenfolge egal).</span></p>' +
+      '<div class="memory-recall-grid">' + inputs + '</div>' +
+      '<div class="memory-actions"><button class="btn-primary" id="memory-submit-recall-btn">Auswerten</button></div>';
+    document.getElementById('memory-submit-recall-btn').addEventListener('click', submitRecall);
+    return;
+  }
+
+  if (memoryPhase === 'result') {
+    renderMemoryResult();
+    return;
+  }
+}
+
+function renderMemoryResult() {
+  const { correctCount, itemMatched, plays, saved } = memoryResultData;
+  const total = memoryChallenge.items.length;
+
+  const rankIdx = player ? plays.findIndex(p => p.player_id === player.id) : -1;
+  const rank = rankIdx >= 0 ? rankIdx + 1 : null;
+  const better = rankIdx >= 0 ? plays.filter(p => p.correct_count < plays[rankIdx].correct_count).length : 0;
+  const pctBetter = plays.length > 1 ? Math.round(better / (plays.length - 1) * 100) : (plays.length === 1 ? 100 : null);
+
+  let statBoxes = '<div class="stat-box"><div class="num">' + correctCount + '/' + total + '</div><div class="lbl">richtig erinnert</div></div>';
+  if (saved && plays.length > 0) {
+    statBoxes += '<div class="stat-box"><div class="num">' + (rank ? '#' + rank : '–') + '</div><div class="lbl">Platz von ' + plays.length + ' Spieler' + (plays.length === 1 ? '' : 'n') + '</div></div>';
+    if (pctBetter !== null) {
+      statBoxes += '<div class="stat-box"><div class="num">' + pctBetter + '%</div><div class="lbl">der Mitspieler geschlagen</div></div>';
+    }
+  }
+
+  const reveal = memoryChallenge.items.map((item, i) =>
+    '<div class="word-chip' + (itemMatched[i] ? ' bonus' : ' missed') + '">' +
+      (itemMatched[i] ? '<span class="star">★</span> ' : '') + escapeHtml(item) + '</div>'
+  ).join('');
+
+  const rows = plays.map((e, i) => {
+    const own = player && e.player_id === player.id;
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main"><div class="board-score">' + escapeHtml(e.nickname) + ' · ' + e.correct_count + '/' + total + '</div></div>' +
+    '</div>';
+  }).join('');
+
+  $memoryContent.innerHTML =
+    '<div class="shelf">' +
+      '<p class="resolution-title">🔍 Ergebnis</p>' +
+      '<div class="stat-grid">' + statBoxes + '</div>' +
+      '<p class="shelf-title" style="display:block; margin-bottom:8px;">Begriffe</p>' +
+      '<div class="shelf-words">' + reveal + '</div>' +
+    '</div>' +
+    (saved ? '' : '<p class="resolution-sub" style="text-align:center;">Ohne Spitzname wird dein Ergebnis nicht in der Bestenliste gespeichert.</p>') +
+    '<div class="memory-actions">' +
+      '<button class="btn-primary" id="memory-retry-btn">Nochmal versuchen</button>' +
+      '<button class="icon-btn" id="memory-new-btn" title="Neue Übung mit neuen Begriffen starten">🆕</button>' +
+    '</div>' +
+    '<p class="board-section-title" style="margin-top:24px;">🏆 Rangliste dieser Übung</p>' +
+    (plays.length === 0
+      ? '<p class="board-empty">Noch keine Ergebnisse.</p>'
+      : '<div class="board-list">' + rows + '</div>');
+
+  document.getElementById('memory-retry-btn').addEventListener('click', startMemoryExercise);
+  document.getElementById('memory-new-btn').addEventListener('click', startNewMemoryExercise);
+}
+
 /* ---------------- Event wiring ---------------- */
 $entryForm.addEventListener('submit', submitWord);
 document.getElementById('speak-btn').addEventListener('click', speakLetters);
@@ -909,19 +1261,22 @@ Array.from($modeRow.children).forEach(btn => {
   });
 });
 $changeNicknameBtn.addEventListener('click', renameNickname);
-$tabPlay.addEventListener('click', () => {
-  $tabPlay.classList.add('active');
-  $tabBoard.classList.remove('active');
-  $playView.classList.remove('hidden');
-  $boardView.classList.add('hidden');
-});
-$tabBoard.addEventListener('click', () => {
-  $tabBoard.classList.add('active');
-  $tabPlay.classList.remove('active');
-  $boardView.classList.remove('hidden');
-  $playView.classList.add('hidden');
-  renderBoard();
-});
+const TABS = [
+  { btn: $tabPlay, view: $playView },
+  { btn: $tabBoard, view: $boardView },
+  { btn: $tabMemory, view: $memoryView },
+];
+function switchTab(index) {
+  TABS.forEach((t, i) => {
+    t.btn.classList.toggle('active', i === index);
+    t.view.classList.toggle('hidden', i !== index);
+  });
+  if (index === 1) renderBoard();
+  if (index === 2) renderMemoryView();
+}
+$tabPlay.addEventListener('click', () => switchTab(0));
+$tabBoard.addEventListener('click', () => switchTab(1));
+$tabMemory.addEventListener('click', () => switchTab(2));
 
 /* ---------------- Init ---------------- */
 renderSettings();
