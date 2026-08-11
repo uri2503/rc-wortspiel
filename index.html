@@ -1,4 +1,4 @@
-<!-- build: 2026-08-11-6 -->
+<!-- build: 2026-08-11-7 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -202,12 +202,12 @@
   .cardmem-stats { display: flex; justify-content: center; gap: 16px; margin-bottom: 16px; font-size: 14px; color: var(--ink-soft); }
   .cardmem-stats b { color: var(--ink); font-family: var(--font-display); }
 
-  .mahjong-grid { display: grid; gap: 4px; margin: 0 auto 16px; max-width: 560px; }
+  .mahjong-grid { display: grid; gap: 6px; margin: 0 auto 20px; max-width: 560px; }
   .mahjong-tile {
     aspect-ratio: 1; border-radius: 8px; border: 2px solid var(--tile-border);
     background: var(--tile); box-shadow: 0 3px 0 var(--tile-shadow);
     display: flex; align-items: center; justify-content: center;
-    font-size: 20px; cursor: pointer; padding: 0; position: relative;
+    font-size: 24px; cursor: pointer; padding: 0; position: relative;
     transition: transform 0.1s ease;
   }
   .mahjong-tile:active { transform: scale(0.94); }
@@ -1783,6 +1783,16 @@ const MAHJONG_LAYOUTS = [
   [{ cols: 6, rows: 4 }, { cols: 4, rows: 2 }],                      // 32 tiles -> 16 pairs
   [{ cols: 8, rows: 4 }, { cols: 4, rows: 2 }],                      // 40 tiles -> 20 pairs
 ];
+// Real Mahjong tile glyphs (Characters, Bamboos, Circles, Winds, Dragons) --
+// deliberately not the fruit/animal emoji from the card-flip game, so the two
+// exercises don't look like reskins of each other.
+const MAHJONG_SYMBOLS = [
+  '🀇', '🀈', '🀉', '🀊', '🀋', '🀌', '🀍', '🀎', '🀏',
+  '🀐', '🀑', '🀒', '🀓', '🀔', '🀕', '🀖', '🀗', '🀘',
+  '🀙', '🀚', '🀛', '🀜', '🀝', '🀞', '🀟', '🀠', '🀡',
+  '🀀', '🀁', '🀂', '🀃', '🀄', '🀅', '🀆',
+];
+const MAHJONG_LAYER_COLORS = ['var(--tile-border)', 'var(--ochre)', 'var(--amber)'];
 function mahjongTierForLevel(level) { return Math.min(Math.floor((level - 1) / 3), MAHJONG_LAYOUTS.length - 1); }
 function mahjongPointsPerPair(pairCount) { return 12 + (pairCount - 8) * 2; }
 function mahjongRoundPoints(pairCount, pairsCleared, seconds, solved) {
@@ -1928,7 +1938,7 @@ async function getCurrentMahjongChallenge(tier) {
 async function createMahjongChallenge(tier) {
   if (!sb) return null;
   const cells = buildMahjongCells(tier);
-  const tileSymbols = generateMahjongTiles(cells, CARDMEM_SYMBOLS);
+  const tileSymbols = generateMahjongTiles(cells, MAHJONG_SYMBOLS);
   const { data, error } = await sb.from('wortspiel_mahjong_challenges')
     .insert({ tier, pair_count: cells.length / 2, symbols: tileSymbols }).select().maybeSingle();
   if (error) { console.error(error); return null; }
@@ -2133,9 +2143,14 @@ function renderMahjongView(errorMessage) {
       const isFree = freeSet.has(i);
       const isSelected = mahjongSelected === i;
       const cls = 'mahjong-tile' + (isFree ? '' : ' blocked') + (isSelected ? ' selected' : '');
-      const offset = cell.layer * 3;
+      const offset = cell.layer * 6;
+      // Higher layers get a warmer border/shadow so the stack reads clearly;
+      // skipped when selected so the selection highlight isn't fought over.
+      const layerColor = MAHJONG_LAYER_COLORS[Math.min(cell.layer, MAHJONG_LAYER_COLORS.length - 1)];
+      const layerStyle = (isSelected || cell.layer === 0) ? '' :
+        ('border-color:' + layerColor + ';box-shadow:0 ' + (3 + cell.layer * 2) + 'px 0 ' + layerColor + ';');
       const style = 'grid-column:' + (cell.col + 1) + ';grid-row:' + (cell.row + 1) +
-        ';transform:translate(-' + offset + 'px,-' + offset + 'px);z-index:' + (cell.layer + 1) + ';';
+        ';transform:translate(-' + offset + 'px,-' + offset + 'px);z-index:' + (cell.layer + 1) + ';' + layerStyle;
       return '<button type="button" class="' + cls + '" style="' + style + '" data-idx="' + i + '">' + mahjongChallenge.symbols[i] + '</button>';
     }).join('');
     const stuck = !mahjongMatched.every(Boolean) && !mahjongHasMovesLeft();
