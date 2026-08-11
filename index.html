@@ -1,4 +1,4 @@
-<!-- build: 2026-08-11-11 -->
+<!-- build: 2026-08-11-12 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -159,7 +159,7 @@
   .board-section-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--ink); margin: 0 0 12px; text-align: center; }
   .board-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 
-  #play-view.hidden, #board-view.hidden, #memory-view.hidden, #cardmemory-view.hidden, #mahjong-view.hidden, #simon-view.hidden, #kim-view.hidden { display: none; }
+  #play-view.hidden, #board-view.hidden, #memory-view.hidden, #cardmemory-view.hidden, #mahjong-view.hidden, #simon-view.hidden, #kim-view.hidden, #palace-view.hidden { display: none; }
 
   .memory-items { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
   .memory-card {
@@ -250,6 +250,20 @@
   .kim-candidate.wrong { background: var(--amber-bg); border-color: var(--amber); box-shadow: 0 3px 0 var(--amber); opacity: 0.7; }
   .kim-candidate.disabled { cursor: default; }
 
+  .palace-list { display: flex; flex-direction: column; gap: 8px; margin: 0 auto 20px; max-width: 420px; }
+  .palace-step {
+    display: flex; align-items: center; gap: 10px;
+    background: var(--tile); border: 2px solid var(--tile-border); border-radius: 12px;
+    padding: 10px 14px; animation: tileIn 0.35s ease both;
+  }
+  .palace-icon { font-size: 22px; }
+  .palace-location { font-family: var(--font-display); font-weight: 600; color: var(--ink-soft); min-width: 96px; }
+  .palace-arrow { color: var(--tile-shadow); }
+  .palace-word { font-family: var(--font-display); font-weight: 700; color: var(--sage-dark); font-size: 17px; }
+  .palace-step.missed .palace-word { color: var(--amber); text-decoration: line-through; }
+  .palace-recall-item { display: flex; flex-direction: column; gap: 4px; }
+  .palace-recall-item label { font-size: 13px; font-weight: 600; color: var(--ink-soft); display: flex; align-items: center; gap: 4px; }
+
   .player-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--ink-soft); margin-bottom: 12px; }
   .link-btn { background: none; border: none; color: var(--sage-dark); font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; font-family: var(--font-body); }
 
@@ -284,6 +298,7 @@
     <button class="tab-btn" id="tab-mahjong">🀄 Mahjong</button>
     <button class="tab-btn" id="tab-simon">🎯 Simon</button>
     <button class="tab-btn" id="tab-kim">🔍 Was fehlt?</button>
+    <button class="tab-btn" id="tab-palace">🏛️ Gedächtnispalast</button>
   </div>
 
   <div id="play-view">
@@ -370,6 +385,11 @@
   <div id="kim-view" class="hidden">
     <div class="player-row" id="kim-player-row"></div>
     <div id="kim-content"></div>
+  </div>
+
+  <div id="palace-view" class="hidden">
+    <div class="player-row" id="palace-player-row"></div>
+    <div id="palace-content"></div>
   </div>
 
 </div>
@@ -548,6 +568,7 @@ const $tabCardMemory = document.getElementById('tab-cardmemory');
 const $tabMahjong = document.getElementById('tab-mahjong');
 const $tabSimon = document.getElementById('tab-simon');
 const $tabKim = document.getElementById('tab-kim');
+const $tabPalace = document.getElementById('tab-palace');
 const $playView = document.getElementById('play-view');
 const $boardView = document.getElementById('board-view');
 const $memoryView = document.getElementById('memory-view');
@@ -555,12 +576,14 @@ const $cardMemoryView = document.getElementById('cardmemory-view');
 const $mahjongView = document.getElementById('mahjong-view');
 const $simonView = document.getElementById('simon-view');
 const $kimView = document.getElementById('kim-view');
+const $palaceView = document.getElementById('palace-view');
 const $boardContent = document.getElementById('board-content');
 const $memoryContent = document.getElementById('memory-content');
 const $cardMemoryContent = document.getElementById('cardmemory-content');
 const $mahjongContent = document.getElementById('mahjong-content');
 const $simonContent = document.getElementById('simon-content');
 const $kimContent = document.getElementById('kim-content');
+const $palaceContent = document.getElementById('palace-content');
 
 /* ---------------- Rendering ---------------- */
 function renderTiles() {
@@ -2935,6 +2958,390 @@ function renderKimResult() {
   document.getElementById('kim-new-btn').addEventListener('click', startNewKimExercise);
 }
 
+/* ---------------- Gedächtnispalast (method of loci) ---------------- */
+// A fourth memory skill: paired-associate binding along a spatial route,
+// rather than free recall, recognition, or sequence. Study a fixed walk
+// through a house where each stop is paired with a word, then recall the
+// words -- but asked about in a *shuffled* order relative to the walk, so
+// it genuinely tests the location<->word binding rather than just sequence
+// memory (which Simon already covers). Shares the "challenge" pattern with
+// the recall/card-flip/mahjong/kim games -- one shared walk per difficulty
+// tier. Words are drawn from the same curated pool as the recall game.
+const PALACE_LOCATIONS = [
+  { icon: '🚪', label: 'Gartentor' },
+  { icon: '🏠', label: 'Haustür' },
+  { icon: '🧥', label: 'Garderobe' },
+  { icon: '🛋️', label: 'Wohnzimmer' },
+  { icon: '🔥', label: 'Kamin' },
+  { icon: '🍽️', label: 'Esstisch' },
+  { icon: '🍳', label: 'Küche' },
+  { icon: '🧊', label: 'Kühlschrank' },
+  { icon: '🪜', label: 'Treppe' },
+  { icon: '🛏️', label: 'Schlafzimmer' },
+  { icon: '🪞', label: 'Bad' },
+  { icon: '📦', label: 'Dachboden' },
+];
+const PALACE_LOCATION_COUNTS = [5, 7, 9, 12];
+function palaceLocationCountForLevel(level) { return PALACE_LOCATION_COUNTS[Math.min(Math.floor((level - 1) / 3), PALACE_LOCATION_COUNTS.length - 1)]; }
+function palacePeekSeconds(locationCount) {
+  if (locationCount <= 7) return null;
+  return locationCount === 9 ? 36 : 30;
+}
+function palacePointsPerLocation(locationCount) { return 10 + (locationCount - 5) * 2; }
+function palaceRoundPoints(locationCount, correctCount) {
+  const perfectBonus = correctCount === locationCount ? 20 : 0;
+  return correctCount * palacePointsPerLocation(locationCount) + perfectBonus;
+}
+
+function generatePalaceChallenge(locationCount) {
+  const locations = PALACE_LOCATIONS.slice(0, locationCount).map(l => l.label);
+  const pool = MEMORY_WORD_POOLS.easy;
+  const words = [];
+  const usedIdx = new Set();
+  while (words.length < locationCount && usedIdx.size < pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    if (usedIdx.has(idx)) continue;
+    usedIdx.add(idx);
+    words.push(pool[idx]);
+  }
+  return { locations, words };
+}
+
+let palacePhase = 'idle'; // idle | loading | memorize | recall | result
+let palaceChallenge = null; // { id, location_count, locations, words }
+let palaceRecallOrder = [];
+let palaceRecallValues = [];
+let palaceResultData = null;
+let palaceTimer = null;
+let palaceTimeLeft = null;
+let playerPalaceXp = 0;
+
+function stopPalaceTimer() {
+  if (palaceTimer) { clearInterval(palaceTimer); palaceTimer = null; }
+}
+
+async function refreshPlayerPalaceXp() {
+  if (!sb || !player || !player.id) { playerPalaceXp = 0; return; }
+  const { data, error } = await sb.from('wortspiel_players').select('palace_xp').eq('id', player.id).maybeSingle();
+  if (error) { console.error(error); return; }
+  playerPalaceXp = (data && data.palace_xp) || 0;
+}
+
+async function getCurrentPalaceChallenge(locationCount) {
+  if (!sb) return null;
+  const { data: existing, error: selErr } = await sb.from('wortspiel_palace_challenges')
+    .select('*').eq('location_count', locationCount).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (selErr) { console.error(selErr); return null; }
+  if (existing) return existing;
+  return createPalaceChallenge(locationCount);
+}
+
+async function createPalaceChallenge(locationCount) {
+  if (!sb) return null;
+  const { locations, words } = generatePalaceChallenge(locationCount);
+  const { data, error } = await sb.from('wortspiel_palace_challenges')
+    .insert({ location_count: locationCount, locations, words }).select().maybeSingle();
+  if (error) { console.error(error); return null; }
+  return data;
+}
+
+function startPalaceMemorizeTimer(seconds) {
+  stopPalaceTimer();
+  palaceTimeLeft = seconds;
+  palaceTimer = setInterval(() => {
+    palaceTimeLeft--;
+    if (palaceTimeLeft <= 0) {
+      proceedToPalaceRecall();
+    } else {
+      const $b = document.getElementById('palace-timer-badge');
+      if ($b) $b.textContent = '⏱ ' + palaceTimeLeft + 's';
+    }
+  }, 1000);
+}
+
+function beginPalaceMemorize() {
+  palaceRecallValues = [];
+  palaceResultData = null;
+  palacePhase = 'memorize';
+  renderPalaceView();
+  const limit = palacePeekSeconds(palaceChallenge.location_count);
+  if (limit) startPalaceMemorizeTimer(limit);
+}
+
+async function startPalaceExercise() {
+  stopPalaceTimer();
+  palaceResultData = null;
+  palacePhase = 'loading';
+  renderPalaceView();
+  await refreshPlayerPalaceXp();
+  const locationCount = palaceLocationCountForLevel(memoryLevelFromXp(playerPalaceXp));
+  palaceChallenge = await getCurrentPalaceChallenge(locationCount);
+  if (!palaceChallenge) {
+    palacePhase = 'idle';
+    renderPalaceView('Übung konnte nicht geladen werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  beginPalaceMemorize();
+}
+
+function retryPalaceExercise() {
+  stopPalaceTimer();
+  beginPalaceMemorize();
+}
+
+async function startNewPalaceExercise() {
+  if (!sb) return;
+  const ok = window.confirm('Neuen Rundgang mit neuen Begriffen starten? Alle, die ab jetzt mitspielen, bekommen diesen neuen Rundgang statt des bisherigen.');
+  if (!ok) return;
+  stopPalaceTimer();
+  palacePhase = 'loading';
+  renderPalaceView();
+  await refreshPlayerPalaceXp();
+  const locationCount = palaceLocationCountForLevel(memoryLevelFromXp(playerPalaceXp));
+  const created = await createPalaceChallenge(locationCount);
+  if (!created) {
+    palacePhase = 'idle';
+    renderPalaceView('Neuer Rundgang konnte nicht erstellt werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  palaceChallenge = created;
+  beginPalaceMemorize();
+}
+
+function proceedToPalaceRecall() {
+  stopPalaceTimer();
+  const order = palaceChallenge.locations.map((_, i) => i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  palaceRecallOrder = order;
+  palaceRecallValues = new Array(order.length).fill('');
+  palacePhase = 'recall';
+  renderPalaceView();
+}
+
+async function submitPalaceRecall() {
+  const inputs = Array.from(document.querySelectorAll('.palace-recall-input'));
+  const typed = inputs.map(inp => inp.value.trim());
+  palaceRecallValues = typed;
+
+  const correctFlags = palaceRecallOrder.map((locIdx, pos) =>
+    (typed[pos] || '').toLowerCase() === palaceChallenge.words[locIdx].toLowerCase()
+  );
+  const correctCount = correctFlags.filter(Boolean).length;
+  const locationCount = palaceChallenge.location_count;
+  const roundPoints = palaceRoundPoints(locationCount, correctCount);
+
+  palacePhase = 'loading';
+  renderPalaceView();
+
+  const p = await ensurePlayer();
+  let plays = [];
+  let xpGained = 0;
+  let overallBoard = [];
+  if (p) {
+    const { data: existing } = await sb.from('wortspiel_palace_plays')
+      .select('*').eq('challenge_id', palaceChallenge.id).eq('player_id', p.id).maybeSingle();
+    if (!existing || roundPoints > existing.points) {
+      const row = {
+        challenge_id: palaceChallenge.id, player_id: p.id, nickname: p.nickname,
+        correct_count: correctCount, points: roundPoints, player_level: memoryLevelFromXp(playerPalaceXp),
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await sb.from('wortspiel_palace_plays')
+        .upsert(row, { onConflict: 'challenge_id,player_id' });
+      if (error) console.error(error);
+      xpGained = roundPoints - (existing ? existing.points : 0);
+      if (xpGained > 0) {
+        const newXp = playerPalaceXp + xpGained;
+        const { error: xpErr } = await sb.from('wortspiel_players').update({ palace_xp: newXp }).eq('id', p.id);
+        if (xpErr) console.error(xpErr); else playerPalaceXp = newXp;
+      }
+    }
+    const { data } = await sb.from('wortspiel_palace_plays')
+      .select('*').eq('challenge_id', palaceChallenge.id).order('points', { ascending: false });
+    plays = data || [];
+    const { data: boardData } = await sb.from('wortspiel_players')
+      .select('id,nickname,palace_xp').gt('palace_xp', 0).order('palace_xp', { ascending: false }).limit(10);
+    overallBoard = boardData || [];
+  }
+
+  palaceResultData = { correctCount, correctFlags, typed, roundPoints, xpGained, plays, overallBoard, saved: !!p };
+  palacePhase = 'result';
+  renderPalaceView();
+}
+
+function renderPalacePlayerRow() {
+  const $row = document.getElementById('palace-player-row');
+  if (!$row) return;
+  if (player && player.nickname) {
+    const lvl = memoryLevelFromXp(playerPalaceXp);
+    const toNext = memoryXpForLevel(lvl + 1) - playerPalaceXp;
+    $row.innerHTML = '👤 ' + escapeHtml(player.nickname) +
+      ' <span class="pill-btn" style="cursor:default;padding:4px 12px;font-size:13px;" title="noch ' + toNext + ' XP bis Level ' + (lvl + 1) + '">🏅 Level ' + lvl + ' · ' + playerPalaceXp + ' XP</span>' +
+      ' <button type="button" class="link-btn" id="palace-change-nickname-btn">Spitzname ändern</button>';
+  } else {
+    $row.innerHTML = 'Noch kein Spitzname gewählt <button type="button" class="link-btn" id="palace-change-nickname-btn">Spitzname wählen</button>';
+  }
+  document.getElementById('palace-change-nickname-btn').addEventListener('click', async () => {
+    await renameNickname();
+    await refreshPlayerPalaceXp();
+    renderPalacePlayerRow();
+  });
+}
+
+function renderPalaceView(errorMessage) {
+  if (!$palaceContent) return;
+  renderPalacePlayerRow();
+
+  if (palacePhase === 'loading') {
+    $palaceContent.innerHTML = '<p class="board-empty">Lädt …</p>';
+    return;
+  }
+
+  if (palacePhase === 'idle') {
+    const lvl = memoryLevelFromXp(playerPalaceXp);
+    const locationCount = palaceLocationCountForLevel(lvl);
+    const limit = palacePeekSeconds(locationCount);
+    $palaceContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">🏛️ Gedächtnispalast</span><br>' +
+      '<span class="sub">Merk dir einen Rundgang durch ' + locationCount + ' Orte, an denen je ein Begriff hängt' + (limit ? ' (in ' + limit + 's)' : '') + '. Danach fragen wir in zufälliger Reihenfolge ab, was wo war.</span></p>' +
+      (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
+      '<div class="memory-actions"><button class="btn-primary" id="palace-start-btn">Übung starten</button></div>';
+    document.getElementById('palace-start-btn').addEventListener('click', startPalaceExercise);
+    if (player && player.id) {
+      refreshPlayerPalaceXp().then(() => { if (palacePhase === 'idle') renderPalacePlayerRow(); });
+    }
+    return;
+  }
+
+  if (!palaceChallenge) { $palaceContent.innerHTML = '<p class="board-empty">Keine aktive Übung.</p>'; return; }
+
+  if (palacePhase === 'memorize') {
+    const limit = palacePeekSeconds(palaceChallenge.location_count);
+    const steps = palaceChallenge.locations.map((loc, i) => {
+      const icon = (PALACE_LOCATIONS.find(l => l.label === loc) || {}).icon || '📍';
+      return '<div class="palace-step">' +
+        '<span class="palace-icon">' + icon + '</span>' +
+        '<span class="palace-location">' + escapeHtml(loc) + '</span>' +
+        '<span class="palace-arrow">→</span>' +
+        '<span class="palace-word">' + escapeHtml(palaceChallenge.words[i]) + '</span>' +
+      '</div>';
+    }).join('');
+    $palaceContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Präg dir den Rundgang ein</span><br>' +
+      '<span class="sub">' + (limit ? 'Die Zeit läuft – geh die Route gedanklich ab.' : 'Nimm dir so viel Zeit, wie du brauchst.') + '</span></p>' +
+      (limit ? '<div class="timer-badge" id="palace-timer-badge" style="margin:0 auto 14px;justify-content:center;">⏱ ' + palaceTimeLeft + 's</div>' : '') +
+      '<div class="palace-list">' + steps + '</div>' +
+      '<div class="memory-actions"><button class="btn-primary" id="palace-memorized-btn">✅ Ich hab mir die Route gemerkt</button></div>';
+    document.getElementById('palace-memorized-btn').addEventListener('click', proceedToPalaceRecall);
+    return;
+  }
+
+  if (palacePhase === 'recall') {
+    const inputs = palaceRecallOrder.map((locIdx, pos) => {
+      const loc = palaceChallenge.locations[locIdx];
+      const icon = (PALACE_LOCATIONS.find(l => l.label === loc) || {}).icon || '📍';
+      return '<div class="palace-recall-item">' +
+        '<label>' + icon + ' ' + escapeHtml(loc) + '</label>' +
+        '<input class="memory-recall-input palace-recall-input" type="text" autocomplete="off" placeholder="Begriff …" value="' + escapeHtml(palaceRecallValues[pos] || '') + '">' +
+      '</div>';
+    }).join('');
+    $palaceContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Was war wo?</span><br>' +
+      '<span class="sub">Trag zu jedem Ort den Begriff ein, der vorhin dort hing (Reihenfolge ist jetzt gemischt).</span></p>' +
+      '<div class="memory-recall-grid">' + inputs + '</div>' +
+      '<div class="memory-actions"><button class="btn-primary" id="palace-submit-recall-btn">Auswerten</button></div>';
+    document.getElementById('palace-submit-recall-btn').addEventListener('click', submitPalaceRecall);
+    return;
+  }
+
+  if (palacePhase === 'result') {
+    renderPalaceResult();
+    return;
+  }
+}
+
+function renderPalaceResult() {
+  const { correctCount, correctFlags, roundPoints, xpGained, plays, overallBoard, saved } = palaceResultData;
+  const total = palaceChallenge.location_count;
+  const myLevel = memoryLevelFromXp(playerPalaceXp);
+
+  const rankIdx = player ? plays.findIndex(p => p.player_id === player.id) : -1;
+  const rank = rankIdx >= 0 ? rankIdx + 1 : null;
+  const better = rankIdx >= 0 ? plays.filter(p => p.points < plays[rankIdx].points).length : 0;
+  const pctBetter = plays.length > 1 ? Math.round(better / (plays.length - 1) * 100) : (plays.length === 1 ? 100 : null);
+
+  let statBoxes = '<div class="stat-box"><div class="num">' + correctCount + '/' + total + '</div><div class="lbl">richtig zugeordnet</div></div>';
+  if (saved) {
+    statBoxes += '<div class="stat-box"><div class="num">+' + roundPoints + '</div><div class="lbl">' + (xpGained > 0 ? 'Punkte (davon +' + xpGained + ' XP)' : 'Punkte') + '</div></div>';
+    statBoxes += '<div class="stat-box"><div class="num">🏅 ' + myLevel + '</div><div class="lbl">' + playerPalaceXp + ' XP gesamt</div></div>';
+  }
+  if (saved && plays.length > 0) {
+    statBoxes += '<div class="stat-box"><div class="num">' + (rank ? '#' + rank : '–') + '</div><div class="lbl">Platz von ' + plays.length + ' Spieler' + (plays.length === 1 ? '' : 'n') + '</div></div>';
+    if (pctBetter !== null) {
+      statBoxes += '<div class="stat-box"><div class="num">' + pctBetter + '%</div><div class="lbl">der Mitspieler geschlagen</div></div>';
+    }
+  }
+
+  const reveal = palaceChallenge.locations.map((loc, i) => {
+    const posInRecall = palaceRecallOrder.indexOf(i);
+    const isCorrect = posInRecall >= 0 && correctFlags[posInRecall];
+    const icon = (PALACE_LOCATIONS.find(l => l.label === loc) || {}).icon || '📍';
+    return '<div class="palace-step' + (isCorrect ? '' : ' missed') + '">' +
+      '<span class="palace-icon">' + icon + '</span>' +
+      '<span class="palace-location">' + escapeHtml(loc) + '</span>' +
+      '<span class="palace-arrow">→</span>' +
+      '<span class="palace-word">' + (isCorrect ? '★ ' : '') + escapeHtml(palaceChallenge.words[i]) + '</span>' +
+    '</div>';
+  }).join('');
+
+  const rows = plays.map((e, i) => {
+    const own = player && e.player_id === player.id;
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main"><div class="board-score">' + escapeHtml(e.nickname) + ' · ' + e.correct_count + '/' + total + ' · ' + e.points + ' Pkt</div></div>' +
+    '</div>';
+  }).join('');
+
+  const overallRows = (overallBoard || []).map((e, i) => {
+    const own = player && e.id === player.id;
+    const lvl = memoryLevelFromXp(e.palace_xp || 0);
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main">' +
+        '<div class="board-score">' + escapeHtml(e.nickname) + ' · 🏅 Level ' + lvl + '</div>' +
+        '<div class="board-meta">' + (e.palace_xp || 0) + ' XP gesamt</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  $palaceContent.innerHTML =
+    '<div class="shelf">' +
+      '<p class="resolution-title">🔍 Ergebnis</p>' +
+      '<div class="stat-grid">' + statBoxes + '</div>' +
+      '<p class="shelf-title" style="display:block; margin-bottom:8px;">Der Rundgang</p>' +
+      '<div class="palace-list">' + reveal + '</div>' +
+    '</div>' +
+    (saved ? '' : '<p class="resolution-sub" style="text-align:center;">Ohne Spitzname wird dein Ergebnis nicht in der Bestenliste gespeichert.</p>') +
+    '<div class="memory-actions">' +
+      '<button class="btn-primary" id="palace-retry-btn">Nochmal versuchen (gleicher Rundgang)</button>' +
+      '<button class="pill-btn" id="palace-new-btn">🆕 Neuen Rundgang starten</button>' +
+    '</div>' +
+    '<p class="board-section-title" style="margin-top:24px;">🏆 Rangliste dieser Übung</p>' +
+    (plays.length === 0
+      ? '<p class="board-empty">Noch keine Ergebnisse.</p>'
+      : '<div class="board-list">' + rows + '</div>') +
+    '<p class="board-section-title" style="margin-top:28px;">🏅 Gesamtrangliste · Level</p>' +
+    (overallRows === ''
+      ? '<p class="board-empty">Noch keine Punkte gesammelt.</p>'
+      : '<div class="board-list">' + overallRows + '</div>');
+
+  document.getElementById('palace-retry-btn').addEventListener('click', retryPalaceExercise);
+  document.getElementById('palace-new-btn').addEventListener('click', startNewPalaceExercise);
+}
+
 /* ---------------- Event wiring ---------------- */
 $entryForm.addEventListener('submit', submitWord);
 document.getElementById('speak-btn').addEventListener('click', speakLetters);
@@ -2974,6 +3381,7 @@ const TABS = [
   { btn: $tabMahjong, view: $mahjongView },
   { btn: $tabSimon, view: $simonView },
   { btn: $tabKim, view: $kimView },
+  { btn: $tabPalace, view: $palaceView },
 ];
 function switchTab(index) {
   TABS.forEach((t, i) => {
@@ -2983,12 +3391,14 @@ function switchTab(index) {
   if (index !== 4) stopMahjongTimer();
   if (index !== 5) stopSimonTimer();
   if (index !== 6) stopKimTimer();
+  if (index !== 7) stopPalaceTimer();
   if (index === 1) renderBoard();
   if (index === 2) renderMemoryView();
   if (index === 3) renderCardMemoryView();
   if (index === 4) renderMahjongView();
   if (index === 5) renderSimonView();
   if (index === 6) renderKimView();
+  if (index === 7) renderPalaceView();
 }
 $tabPlay.addEventListener('click', () => switchTab(0));
 $tabBoard.addEventListener('click', () => switchTab(1));
@@ -2997,6 +3407,7 @@ $tabCardMemory.addEventListener('click', () => switchTab(3));
 $tabMahjong.addEventListener('click', () => switchTab(4));
 $tabSimon.addEventListener('click', () => switchTab(5));
 $tabKim.addEventListener('click', () => switchTab(6));
+$tabPalace.addEventListener('click', () => switchTab(7));
 
 /* ---------------- Init ---------------- */
 renderSettings();
