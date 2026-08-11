@@ -1,4 +1,4 @@
-<!-- build: 2026-08-11-3 -->
+<!-- build: 2026-08-11-4 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -155,7 +155,7 @@
   .board-section-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--ink); margin: 0 0 12px; text-align: center; }
   .board-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 
-  #play-view.hidden, #board-view.hidden, #memory-view.hidden { display: none; }
+  #play-view.hidden, #board-view.hidden, #memory-view.hidden, #cardmemory-view.hidden { display: none; }
 
   .memory-items { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
   .memory-card {
@@ -188,6 +188,20 @@
   .memory-actions { display: flex; justify-content: center; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }
   .memory-reveal-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
 
+  .cardmem-grid { display: grid; gap: 8px; margin: 0 auto 20px; max-width: 460px; }
+  .cardmem-card {
+    aspect-ratio: 1; border-radius: 12px; border: 2px solid var(--tile-border);
+    background: var(--sage); box-shadow: 0 3px 0 var(--sage-dark);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 26px; cursor: pointer; padding: 0;
+    transition: transform 0.1s ease;
+  }
+  .cardmem-card:active { transform: scale(0.94); }
+  .cardmem-card.revealed { background: var(--tile); box-shadow: 0 3px 0 var(--tile-shadow); cursor: default; }
+  .cardmem-card.matched { background: var(--sage-bg); border-color: var(--sage); box-shadow: none; cursor: default; opacity: 0.8; }
+  .cardmem-stats { display: flex; justify-content: center; gap: 16px; margin-bottom: 16px; font-size: 14px; color: var(--ink-soft); }
+  .cardmem-stats b { color: var(--ink); font-family: var(--font-display); }
+
   .player-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--ink-soft); margin-bottom: 12px; }
   .link-btn { background: none; border: none; color: var(--sage-dark); font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; font-family: var(--font-body); }
 
@@ -218,6 +232,7 @@
     <button class="tab-btn active" id="tab-play">▶️ Spielen</button>
     <button class="tab-btn" id="tab-board">🏆 Bestenliste</button>
     <button class="tab-btn" id="tab-memory">🧠 Gedächtnis</button>
+    <button class="tab-btn" id="tab-cardmemory">🃏 Karten-Memory</button>
   </div>
 
   <div id="play-view">
@@ -284,6 +299,11 @@
   <div id="memory-view" class="hidden">
     <div class="player-row" id="memory-player-row"></div>
     <div id="memory-content"></div>
+  </div>
+
+  <div id="cardmemory-view" class="hidden">
+    <div class="player-row" id="cardmemory-player-row"></div>
+    <div id="cardmemory-content"></div>
   </div>
 
 </div>
@@ -458,11 +478,14 @@ const $newChallengeBtn = document.getElementById('new-challenge-btn');
 const $tabPlay = document.getElementById('tab-play');
 const $tabBoard = document.getElementById('tab-board');
 const $tabMemory = document.getElementById('tab-memory');
+const $tabCardMemory = document.getElementById('tab-cardmemory');
 const $playView = document.getElementById('play-view');
 const $boardView = document.getElementById('board-view');
 const $memoryView = document.getElementById('memory-view');
+const $cardMemoryView = document.getElementById('cardmemory-view');
 const $boardContent = document.getElementById('board-content');
 const $memoryContent = document.getElementById('memory-content');
+const $cardMemoryContent = document.getElementById('cardmemory-content');
 
 /* ---------------- Rendering ---------------- */
 function renderTiles() {
@@ -1365,6 +1388,359 @@ function renderMemoryResult() {
   document.getElementById('memory-new-btn').addEventListener('click', startNewMemoryExercise);
 }
 
+/* ---------------- Card memory game (find the pairs) ---------------- */
+// Reuses the level/XP curve from the recall game (memoryXpForLevel /
+// memoryLevelFromXp) since it's a generic formula, but keeps its own XP
+// pool (card_memory_xp) so progress in the two exercises stays separate.
+const CARDMEM_SYMBOLS = [
+  '🍎', '🍋', '🍇', '🍓', '🍉', '🍌', '🥕', '🌽', '🍄', '🌻',
+  '🌸', '🍀', '🐝', '🐞', '🦋', '🐢', '🐬', '🐳', '⭐', '🌙',
+  '☀️', '🌈', '💧', '🔥', '🎈', '🎵', '⚽', '🚗', '🏠', '❤️',
+];
+const CARDMEM_PAIR_COUNTS = [6, 8, 10, 12];
+function cardmemPairCountForLevel(level) {
+  const tier = Math.min(Math.floor((level - 1) / 3), CARDMEM_PAIR_COUNTS.length - 1);
+  return CARDMEM_PAIR_COUNTS[tier];
+}
+function cardmemColumnsForPairCount(pairCount) {
+  return { 6: 4, 8: 4, 10: 5, 12: 6 }[pairCount] || 4;
+}
+function cardmemPeekSeconds(pairCount) {
+  if (pairCount <= 6) return 3;
+  if (pairCount <= 8) return 2;
+  return null;
+}
+function cardmemPointsPerPair(pairCount) { return 10 + (pairCount - 6) * 3; }
+function cardmemRoundPoints(pairCount, moves) {
+  const efficient = moves <= Math.round(pairCount * 1.5);
+  return pairCount * cardmemPointsPerPair(pairCount) + (efficient ? 20 : 0);
+}
+
+function generateCardLayout(pairCount) {
+  const pool = [...CARDMEM_SYMBOLS];
+  const chosen = [];
+  while (chosen.length < pairCount && pool.length) {
+    const idx = Math.floor(Math.random() * pool.length);
+    chosen.push(pool[idx]);
+    pool.splice(idx, 1);
+  }
+  const deck = chosen.concat(chosen);
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  return deck;
+}
+
+let cardmemPhase = 'idle'; // idle | loading | peek | playing | result
+let cardmemChallenge = null; // { id, pair_count, layout }
+let cardmemMatched = [];
+let cardmemRevealed = [];
+let cardmemMoves = 0;
+let cardmemLocked = false;
+let cardmemResultData = null;
+let cardmemPeekTimer = null;
+let playerCardMemoryXp = 0;
+
+async function refreshPlayerCardMemoryXp() {
+  if (!sb || !player || !player.id) { playerCardMemoryXp = 0; return; }
+  const { data, error } = await sb.from('wortspiel_players').select('card_memory_xp').eq('id', player.id).maybeSingle();
+  if (error) { console.error(error); return; }
+  playerCardMemoryXp = (data && data.card_memory_xp) || 0;
+}
+
+async function getCurrentCardChallenge(pairCount) {
+  if (!sb) return null;
+  const { data: existing, error: selErr } = await sb.from('wortspiel_card_challenges')
+    .select('*').eq('pair_count', pairCount).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (selErr) { console.error(selErr); return null; }
+  if (existing) return existing;
+  return createCardChallenge(pairCount);
+}
+
+async function createCardChallenge(pairCount) {
+  if (!sb) return null;
+  const layout = generateCardLayout(pairCount);
+  const { data, error } = await sb.from('wortspiel_card_challenges').insert({ pair_count: pairCount, layout }).select().maybeSingle();
+  if (error) { console.error(error); return null; }
+  return data;
+}
+
+function stopCardPeekTimer() {
+  if (cardmemPeekTimer) { clearTimeout(cardmemPeekTimer); cardmemPeekTimer = null; }
+}
+
+function beginCardRound() {
+  stopCardPeekTimer();
+  cardmemRevealed = [];
+  cardmemMoves = 0;
+  cardmemLocked = false;
+  cardmemResultData = null;
+  cardmemMatched = new Array(cardmemChallenge.layout.length).fill(false);
+  const peek = cardmemPeekSeconds(cardmemChallenge.pair_count);
+  if (peek) {
+    cardmemPhase = 'peek';
+    renderCardMemoryView();
+    cardmemPeekTimer = setTimeout(() => {
+      cardmemPeekTimer = null;
+      cardmemPhase = 'playing';
+      renderCardMemoryView();
+    }, peek * 1000);
+  } else {
+    cardmemPhase = 'playing';
+    renderCardMemoryView();
+  }
+}
+
+async function startCardMemoryExercise() {
+  stopCardPeekTimer();
+  cardmemResultData = null;
+  cardmemPhase = 'loading';
+  renderCardMemoryView();
+  await refreshPlayerCardMemoryXp();
+  const pairCount = cardmemPairCountForLevel(memoryLevelFromXp(playerCardMemoryXp));
+  cardmemChallenge = await getCurrentCardChallenge(pairCount);
+  if (!cardmemChallenge) {
+    cardmemPhase = 'idle';
+    renderCardMemoryView('Übung konnte nicht geladen werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  beginCardRound();
+}
+
+function retryCardMemoryExercise() {
+  beginCardRound();
+}
+
+async function startNewCardMemoryExercise() {
+  if (!sb) return;
+  const ok = window.confirm('Neues Karten-Memory mit neuem Layout starten? Alle, die ab jetzt mitspielen, bekommen diese neue Runde statt der bisherigen.');
+  if (!ok) return;
+  stopCardPeekTimer();
+  cardmemPhase = 'loading';
+  renderCardMemoryView();
+  await refreshPlayerCardMemoryXp();
+  const pairCount = cardmemPairCountForLevel(memoryLevelFromXp(playerCardMemoryXp));
+  const created = await createCardChallenge(pairCount);
+  if (!created) {
+    cardmemPhase = 'idle';
+    renderCardMemoryView('Neue Übung konnte nicht erstellt werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  cardmemChallenge = created;
+  beginCardRound();
+}
+
+function handleCardClick(idx) {
+  if (cardmemPhase !== 'playing' || cardmemLocked) return;
+  if (cardmemMatched[idx] || cardmemRevealed.includes(idx)) return;
+  cardmemRevealed.push(idx);
+  if (cardmemRevealed.length < 2) {
+    renderCardMemoryView();
+    return;
+  }
+  cardmemMoves++;
+  const [a, b] = cardmemRevealed;
+  if (cardmemChallenge.layout[a] === cardmemChallenge.layout[b]) {
+    cardmemMatched[a] = true;
+    cardmemMatched[b] = true;
+    cardmemRevealed = [];
+    renderCardMemoryView();
+    if (cardmemMatched.every(Boolean)) finishCardRound();
+  } else {
+    cardmemLocked = true;
+    renderCardMemoryView();
+    setTimeout(() => {
+      cardmemRevealed = [];
+      cardmemLocked = false;
+      renderCardMemoryView();
+    }, 900);
+  }
+}
+
+async function finishCardRound() {
+  const pairCount = cardmemChallenge.pair_count;
+  const roundPoints = cardmemRoundPoints(pairCount, cardmemMoves);
+  const finishedMoves = cardmemMoves;
+
+  cardmemPhase = 'loading';
+  renderCardMemoryView();
+
+  const p = await ensurePlayer();
+  let plays = [];
+  let xpGained = 0;
+  let overallBoard = [];
+  if (p) {
+    const { data: existing } = await sb.from('wortspiel_card_plays')
+      .select('*').eq('challenge_id', cardmemChallenge.id).eq('player_id', p.id).maybeSingle();
+    if (!existing || finishedMoves < existing.moves) {
+      const row = {
+        challenge_id: cardmemChallenge.id, player_id: p.id, nickname: p.nickname,
+        moves: finishedMoves, points: roundPoints, player_level: memoryLevelFromXp(playerCardMemoryXp),
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await sb.from('wortspiel_card_plays')
+        .upsert(row, { onConflict: 'challenge_id,player_id' });
+      if (error) console.error(error);
+      xpGained = roundPoints - (existing ? existing.points : 0);
+      if (xpGained > 0) {
+        const newXp = playerCardMemoryXp + xpGained;
+        const { error: xpErr } = await sb.from('wortspiel_players').update({ card_memory_xp: newXp }).eq('id', p.id);
+        if (xpErr) console.error(xpErr); else playerCardMemoryXp = newXp;
+      }
+    }
+    const { data } = await sb.from('wortspiel_card_plays')
+      .select('*').eq('challenge_id', cardmemChallenge.id).order('moves', { ascending: true });
+    plays = data || [];
+    const { data: boardData } = await sb.from('wortspiel_players')
+      .select('id,nickname,card_memory_xp').order('card_memory_xp', { ascending: false }).limit(10);
+    overallBoard = boardData || [];
+  }
+
+  cardmemResultData = { moves: finishedMoves, roundPoints, xpGained, plays, overallBoard, saved: !!p };
+  cardmemPhase = 'result';
+  renderCardMemoryView();
+}
+
+function renderCardMemoryPlayerRow() {
+  const $row = document.getElementById('cardmemory-player-row');
+  if (!$row) return;
+  if (player && player.nickname) {
+    const lvl = memoryLevelFromXp(playerCardMemoryXp);
+    const toNext = memoryXpForLevel(lvl + 1) - playerCardMemoryXp;
+    $row.innerHTML = '👤 ' + escapeHtml(player.nickname) +
+      ' <span class="pill-btn" style="cursor:default;padding:4px 12px;font-size:13px;" title="noch ' + toNext + ' XP bis Level ' + (lvl + 1) + '">🏅 Level ' + lvl + ' · ' + playerCardMemoryXp + ' XP</span>' +
+      ' <button type="button" class="link-btn" id="cardmemory-change-nickname-btn">Spitzname ändern</button>';
+  } else {
+    $row.innerHTML = 'Noch kein Spitzname gewählt <button type="button" class="link-btn" id="cardmemory-change-nickname-btn">Spitzname wählen</button>';
+  }
+  document.getElementById('cardmemory-change-nickname-btn').addEventListener('click', async () => {
+    await renameNickname();
+    await refreshPlayerCardMemoryXp();
+    renderCardMemoryPlayerRow();
+  });
+}
+
+function renderCardMemoryView(errorMessage) {
+  if (!$cardMemoryContent) return;
+  renderCardMemoryPlayerRow();
+
+  if (cardmemPhase === 'loading') {
+    $cardMemoryContent.innerHTML = '<p class="board-empty">Lädt …</p>';
+    return;
+  }
+
+  if (cardmemPhase === 'idle') {
+    const lvl = memoryLevelFromXp(playerCardMemoryXp);
+    const pairCount = cardmemPairCountForLevel(lvl);
+    const peek = cardmemPeekSeconds(pairCount);
+    $cardMemoryContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">🃏 Karten-Memory</span><br>' +
+      '<span class="sub">Finde alle ' + pairCount + ' Paare mit möglichst wenigen Zügen' + (peek ? ' – am Anfang gibt es ' + peek + 's zum Einprägen' : '') + '.</span></p>' +
+      (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
+      '<div class="memory-actions"><button class="btn-primary" id="cardmemory-start-btn">Übung starten</button></div>';
+    document.getElementById('cardmemory-start-btn').addEventListener('click', startCardMemoryExercise);
+    if (player && player.id) {
+      refreshPlayerCardMemoryXp().then(() => { if (cardmemPhase === 'idle') renderCardMemoryPlayerRow(); });
+    }
+    return;
+  }
+
+  if (!cardmemChallenge) { $cardMemoryContent.innerHTML = '<p class="board-empty">Keine aktive Übung.</p>'; return; }
+
+  if (cardmemPhase === 'peek' || cardmemPhase === 'playing') {
+    const cols = cardmemColumnsForPairCount(cardmemChallenge.pair_count);
+    const cards = cardmemChallenge.layout.map((symbol, i) => {
+      const isPeek = cardmemPhase === 'peek';
+      const isMatched = cardmemMatched[i];
+      const isRevealed = isPeek || cardmemRevealed.includes(i);
+      const cls = 'cardmem-card' + (isMatched ? ' matched' : (isRevealed ? ' revealed' : ''));
+      const face = (isRevealed || isMatched) ? symbol : '';
+      return '<button type="button" class="' + cls + '" data-idx="' + i + '"' + (isPeek || isMatched ? ' disabled' : '') + '>' + face + '</button>';
+    }).join('');
+    $cardMemoryContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">' + (cardmemPhase === 'peek' ? 'Präg dir die Karten ein …' : 'Finde die Paare') + '</span><br>' +
+      '<span class="sub">' + (cardmemPhase === 'peek' ? 'Gleich werden sie verdeckt.' : cardmemChallenge.pair_count + ' Paare · ' + cardmemMoves + ' Züge bisher') + '</span></p>' +
+      '<div class="cardmem-grid" style="grid-template-columns: repeat(' + cols + ', 1fr);">' + cards + '</div>';
+    if (cardmemPhase === 'playing') {
+      Array.from($cardMemoryContent.querySelectorAll('.cardmem-card')).forEach($c => {
+        $c.addEventListener('click', () => handleCardClick(parseInt($c.dataset.idx, 10)));
+      });
+    }
+    return;
+  }
+
+  if (cardmemPhase === 'result') {
+    renderCardMemoryResult();
+    return;
+  }
+}
+
+function renderCardMemoryResult() {
+  const { moves, roundPoints, xpGained, plays, overallBoard, saved } = cardmemResultData;
+  const pairCount = cardmemChallenge.pair_count;
+  const myLevel = memoryLevelFromXp(playerCardMemoryXp);
+
+  const rankIdx = player ? plays.findIndex(p => p.player_id === player.id) : -1;
+  const rank = rankIdx >= 0 ? rankIdx + 1 : null;
+  const better = rankIdx >= 0 ? plays.filter(p => p.moves > plays[rankIdx].moves).length : 0;
+  const pctBetter = plays.length > 1 ? Math.round(better / (plays.length - 1) * 100) : (plays.length === 1 ? 100 : null);
+
+  let statBoxes = '<div class="stat-box"><div class="num">' + moves + '</div><div class="lbl">Züge für ' + pairCount + ' Paare</div></div>';
+  if (saved) {
+    statBoxes += '<div class="stat-box"><div class="num">+' + roundPoints + '</div><div class="lbl">' + (xpGained > 0 ? 'Punkte (davon +' + xpGained + ' XP)' : 'Punkte') + '</div></div>';
+    statBoxes += '<div class="stat-box"><div class="num">🏅 ' + myLevel + '</div><div class="lbl">' + playerCardMemoryXp + ' XP gesamt</div></div>';
+  }
+  if (saved && plays.length > 0) {
+    statBoxes += '<div class="stat-box"><div class="num">' + (rank ? '#' + rank : '–') + '</div><div class="lbl">Platz von ' + plays.length + ' Spieler' + (plays.length === 1 ? '' : 'n') + '</div></div>';
+    if (pctBetter !== null) {
+      statBoxes += '<div class="stat-box"><div class="num">' + pctBetter + '%</div><div class="lbl">der Mitspieler geschlagen</div></div>';
+    }
+  }
+
+  const rows = plays.map((e, i) => {
+    const own = player && e.player_id === player.id;
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main"><div class="board-score">' + escapeHtml(e.nickname) + ' · ' + e.moves + ' Züge · ' + e.points + ' Pkt</div></div>' +
+    '</div>';
+  }).join('');
+
+  const overallRows = (overallBoard || []).map((e, i) => {
+    const own = player && e.id === player.id;
+    const lvl = memoryLevelFromXp(e.card_memory_xp || 0);
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main">' +
+        '<div class="board-score">' + escapeHtml(e.nickname) + ' · 🏅 Level ' + lvl + '</div>' +
+        '<div class="board-meta">' + (e.card_memory_xp || 0) + ' XP gesamt</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  $cardMemoryContent.innerHTML =
+    '<div class="shelf">' +
+      '<p class="resolution-title">🔍 Ergebnis</p>' +
+      '<div class="stat-grid">' + statBoxes + '</div>' +
+    '</div>' +
+    (saved ? '' : '<p class="resolution-sub" style="text-align:center;">Ohne Spitzname wird dein Ergebnis nicht in der Bestenliste gespeichert.</p>') +
+    '<div class="memory-actions">' +
+      '<button class="btn-primary" id="cardmemory-retry-btn">Nochmal versuchen (gleiches Layout)</button>' +
+      '<button class="pill-btn" id="cardmemory-new-btn">🆕 Neues Layout starten</button>' +
+    '</div>' +
+    '<p class="board-section-title" style="margin-top:24px;">🏆 Rangliste dieser Übung</p>' +
+    (plays.length === 0
+      ? '<p class="board-empty">Noch keine Ergebnisse.</p>'
+      : '<div class="board-list">' + rows + '</div>') +
+    '<p class="board-section-title" style="margin-top:28px;">🏅 Gesamtrangliste · Level</p>' +
+    (overallRows === ''
+      ? '<p class="board-empty">Noch keine Punkte gesammelt.</p>'
+      : '<div class="board-list">' + overallRows + '</div>');
+
+  document.getElementById('cardmemory-retry-btn').addEventListener('click', retryCardMemoryExercise);
+  document.getElementById('cardmemory-new-btn').addEventListener('click', startNewCardMemoryExercise);
+}
+
 /* ---------------- Event wiring ---------------- */
 $entryForm.addEventListener('submit', submitWord);
 document.getElementById('speak-btn').addEventListener('click', speakLetters);
@@ -1400,6 +1776,7 @@ const TABS = [
   { btn: $tabPlay, view: $playView },
   { btn: $tabBoard, view: $boardView },
   { btn: $tabMemory, view: $memoryView },
+  { btn: $tabCardMemory, view: $cardMemoryView },
 ];
 function switchTab(index) {
   TABS.forEach((t, i) => {
@@ -1408,10 +1785,12 @@ function switchTab(index) {
   });
   if (index === 1) renderBoard();
   if (index === 2) renderMemoryView();
+  if (index === 3) renderCardMemoryView();
 }
 $tabPlay.addEventListener('click', () => switchTab(0));
 $tabBoard.addEventListener('click', () => switchTab(1));
 $tabMemory.addEventListener('click', () => switchTab(2));
+$tabCardMemory.addEventListener('click', () => switchTab(3));
 
 /* ---------------- Init ---------------- */
 renderSettings();
