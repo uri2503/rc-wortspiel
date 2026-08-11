@@ -199,6 +199,7 @@
     <div class="controls-row">
       <button class="icon-btn" id="speak-btn" title="Buchstaben vorlesen">🔊</button>
       <button class="icon-btn" id="new-round-btn" title="Neue Runde">🔄</button>
+      <button class="icon-btn" id="new-challenge-btn" title="Neue Challenge mit neuen Buchstaben starten" style="display:none;">🆕</button>
       <div class="timer-badge" id="timer-badge" style="display:none;"></div>
     </div>
 
@@ -230,7 +231,7 @@
       <p class="settings-title">Einstellungen</p>
       <div class="settings-row" id="mode-row">
         <button class="pill-btn" data-mode="free">🔀 Frei üben</button>
-        <button class="pill-btn" data-mode="challenge">🏆 Tägliche Challenge</button>
+        <button class="pill-btn" data-mode="challenge">🏆 Challenge</button>
       </div>
       <div class="settings-row" id="letter-count-row">
         <button class="pill-btn" data-count="4">4 Buchstaben</button>
@@ -325,14 +326,6 @@ function computeMaxPossible(lettersArr) {
   return { words, maxScore };
 }
 
-function todayLocalDateStr() {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return y + '-' + m + '-' + day;
-}
-
 /* ---------------- Persistence (localStorage) ---------------- */
 const STORAGE_KEY = 'wortspiel-state-v1';
 
@@ -424,6 +417,7 @@ const $playerNameLabel = document.getElementById('player-name-label');
 const $changeNicknameBtn = document.getElementById('change-nickname-btn');
 const $challengeResult = document.getElementById('challenge-result');
 const $newRoundBtn = document.getElementById('new-round-btn');
+const $newChallengeBtn = document.getElementById('new-challenge-btn');
 const $tabPlay = document.getElementById('tab-play');
 const $tabBoard = document.getElementById('tab-board');
 const $playView = document.getElementById('play-view');
@@ -515,7 +509,7 @@ function renderChallengeResult(stats) {
   }
 
   $challengeResult.innerHTML =
-    '<p class="resolution-title">🔍 Auflösung der heutigen Challenge</p>' +
+    '<p class="resolution-title">🔍 Auflösung der aktuellen Challenge</p>' +
     '<p class="resolution-sub">Buchstaben: ' + escapeHtml(challenge.letters) + ' · maximal ' + challenge.max_word_count + ' Wörter (' + challenge.max_score + ' Punkte) waren möglich.</p>' +
     (!saved ? '<p class="resolution-sub">Ohne Spitzname wird dein Ergebnis nicht in der Bestenliste gespeichert.</p>' : '') +
     '<div class="stat-grid">' + statBoxes + '</div>' +
@@ -529,7 +523,11 @@ function renderRoundControls() {
   $wordInput.disabled = !roundActive;
   $addBtn.disabled = !roundActive;
   $wordInput.placeholder = roundActive ? 'Wort eingeben …' : 'Runde beendet';
-  $roundToggleBtn.textContent = roundActive ? 'Runde beenden' : 'Neue Runde starten';
+  if (roundActive) {
+    $roundToggleBtn.textContent = 'Runde beenden';
+  } else {
+    $roundToggleBtn.textContent = settings.mode === 'challenge' ? 'Nochmal versuchen' : 'Neue Runde starten';
+  }
 }
 
 function renderSettings() {
@@ -542,8 +540,8 @@ function renderSettings() {
   });
   $timerToggleBtn.textContent = 'Timer ' + (settings.timerEnabled ? 'an' : 'aus');
   $timerToggleBtn.classList.toggle('timer-on', settings.timerEnabled);
-  $newRoundBtn.disabled = settings.mode === 'challenge';
-  $newRoundBtn.title = settings.mode === 'challenge' ? 'In der täglichen Challenge sind die Buchstaben für alle fest.' : 'Neue Runde';
+  $newRoundBtn.style.display = settings.mode === 'challenge' ? 'none' : 'flex';
+  $newChallengeBtn.style.display = settings.mode === 'challenge' ? 'flex' : 'none';
   renderPlayerRow();
 }
 
@@ -570,7 +568,7 @@ async function renderBoard() {
 
   $boardContent.innerHTML =
     '<div class="board-tabs" id="board-count-tabs">' + tabs + '</div>' +
-    '<p class="board-section-title">🏆 Tägliche Challenge – heute</p>' +
+    '<p class="board-section-title">🏆 Aktuelle Challenge</p>' +
     '<div id="challenge-board"><p class="board-empty">Lädt …</p></div>' +
     '<p class="board-section-title" style="margin-top:28px;">Deine besten Runden (frei geübt, auf diesem Gerät)</p>' +
     '<div id="local-board"></div>';
@@ -616,9 +614,8 @@ async function renderChallengeBoard() {
     $cb.innerHTML = '<p class="board-empty">Bestenliste aktuell nicht erreichbar (keine Internetverbindung?).</p>';
     return;
   }
-  const dateStr = todayLocalDateStr();
-  const { data: challenge, error: challengeErr } = await sb.from('wortspiel_daily_challenges')
-    .select('*').eq('challenge_date', dateStr).eq('letter_count', requestedCount).maybeSingle();
+  const { data: challenge, error: challengeErr } = await sb.from('wortspiel_challenges')
+    .select('*').eq('letter_count', requestedCount).order('created_at', { ascending: false }).limit(1).maybeSingle();
 
   if (boardLetterCount !== requestedCount) return; // Nutzer hat inzwischen die Länge gewechselt
   const $target = document.getElementById('challenge-board');
@@ -629,7 +626,7 @@ async function renderChallengeBoard() {
     return;
   }
   if (!challenge) {
-    $target.innerHTML = '<p class="board-empty">Heute wurde die Challenge mit ' + requestedCount + ' Buchstaben noch von niemandem gestartet. Spiel als Erste:r los!</p>';
+    $target.innerHTML = '<p class="board-empty">Es läuft noch keine Challenge mit ' + requestedCount + ' Buchstaben. Spiel als Erste:r los!</p>';
     return;
   }
 
@@ -638,9 +635,9 @@ async function renderChallengeBoard() {
   const plays = playsData || [];
 
   const header = '<div class="stat-grid">' +
-    '<div class="stat-box"><div class="num">' + escapeHtml(challenge.letters) + '</div><div class="lbl">Buchstaben heute</div></div>' +
+    '<div class="stat-box"><div class="num">' + escapeHtml(challenge.letters) + '</div><div class="lbl">Aktuelle Buchstaben</div></div>' +
     '<div class="stat-box"><div class="num">' + challenge.max_word_count + '</div><div class="lbl">Maximal mögliche Wörter</div></div>' +
-    '<div class="stat-box"><div class="num">' + plays.length + '</div><div class="lbl">Mitspieler heute</div></div>' +
+    '<div class="stat-box"><div class="num">' + plays.length + '</div><div class="lbl">Mitspieler bisher</div></div>' +
   '</div>';
 
   if (plays.length === 0) {
@@ -663,34 +660,75 @@ async function renderChallengeBoard() {
 }
 
 /* ---------------- Game logic ---------------- */
-async function getOrCreateChallenge(letterCount) {
+async function getCurrentChallenge(letterCount) {
   if (!sb) return null;
-  const dateStr = todayLocalDateStr();
-  const { data: existing, error: selectErr } = await sb.from('wortspiel_daily_challenges')
-    .select('*').eq('challenge_date', dateStr).eq('letter_count', letterCount).maybeSingle();
+  const { data: existing, error: selectErr } = await sb.from('wortspiel_challenges')
+    .select('*').eq('letter_count', letterCount).order('created_at', { ascending: false }).limit(1).maybeSingle();
   if (selectErr) { console.error(selectErr); return null; }
   if (existing) return existing;
+  return createChallenge(letterCount);
+}
 
+async function createChallenge(letterCount) {
+  if (!sb) return null;
   const candidateLetters = generateLetters(letterCount);
   const { words, maxScore } = computeMaxPossible(candidateLetters);
   const row = {
-    challenge_date: dateStr,
     letter_count: letterCount,
     letters: candidateLetters.join(''),
     possible_words: words,
     max_word_count: words.length,
     max_score: maxScore,
   };
-  const { data: inserted, error: insertErr } = await sb.from('wortspiel_daily_challenges')
-    .upsert(row, { onConflict: 'challenge_date,letter_count', ignoreDuplicates: true })
-    .select().maybeSingle();
-  if (inserted) return inserted;
-  if (insertErr) console.error(insertErr);
+  const { data: inserted, error: insertErr } = await sb.from('wortspiel_challenges')
+    .insert(row).select().maybeSingle();
+  if (insertErr) { console.error(insertErr); return null; }
+  return inserted;
+}
 
-  const { data: winner, error: winnerErr } = await sb.from('wortspiel_daily_challenges')
-    .select('*').eq('challenge_date', dateStr).eq('letter_count', letterCount).maybeSingle();
-  if (winnerErr) { console.error(winnerErr); return null; }
-  return winner;
+async function startNewChallenge() {
+  if (!sb || settings.mode !== 'challenge') return;
+  const ok = window.confirm('Neue Challenge mit neuen Buchstaben starten? Alle, die ab jetzt mitspielen, spielen diese neue Runde statt der bisherigen.');
+  if (!ok) return;
+  clearInterval(timerInterval);
+  hideChallengeResult();
+  roundActive = false;
+  renderRoundControls();
+  setMessage('Neue Challenge wird erstellt …', 'neutral');
+
+  const created = await createChallenge(settings.letterCount);
+  if (!created) {
+    setMessage('Neue Challenge konnte nicht erstellt werden. Prüfe deine Internetverbindung.', 'amber');
+    return;
+  }
+  currentChallenge = created;
+  letters = currentChallenge.letters.split('');
+  letterCounts = countLetters(letters);
+  foundWords = [];
+  roundActive = true;
+  timeLeft = settings.letterCount <= 4 ? 60 : settings.letterCount === 5 ? 90 : settings.letterCount === 6 ? 120 : 150;
+  setMessage('Neue Challenge – wie viele der möglichen Wörter findest du?', 'neutral');
+  renderTiles();
+  renderShelf();
+  renderBestNote();
+  renderRoundControls();
+  renderTimerBadge();
+  $wordInput.value = '';
+  setTimeout(() => $wordInput.focus(), 50);
+
+  if (settings.timerEnabled) {
+    timerInterval = setInterval(() => {
+      timeLeft -= 1;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        renderTimerBadge();
+        clearInterval(timerInterval);
+        endRound();
+        return;
+      }
+      renderTimerBadge();
+    }, 1000);
+  }
 }
 
 async function startRound() {
@@ -700,8 +738,8 @@ async function startRound() {
   renderRoundControls();
 
   if (settings.mode === 'challenge') {
-    setMessage('Lädt die heutige Challenge …', 'neutral');
-    currentChallenge = await getOrCreateChallenge(settings.letterCount);
+    setMessage('Lädt die aktuelle Challenge …', 'neutral');
+    currentChallenge = await getCurrentChallenge(settings.letterCount);
     if (!currentChallenge) {
       setMessage('Challenge konnte nicht geladen werden. Prüfe deine Internetverbindung.', 'amber');
       return;
@@ -716,7 +754,7 @@ async function startRound() {
   foundWords = [];
   roundActive = true;
   timeLeft = settings.letterCount <= 4 ? 60 : settings.letterCount === 5 ? 90 : settings.letterCount === 6 ? 120 : 150;
-  setMessage(settings.mode === 'challenge' ? 'Tägliche Challenge – wie viele der möglichen Wörter findest du?' : 'Los geht’s — wie viele Wörter findest du?', 'neutral');
+  setMessage(settings.mode === 'challenge' ? 'Aktuelle Challenge – wie viele der möglichen Wörter findest du?' : 'Los geht’s — wie viele Wörter findest du?', 'neutral');
   renderTiles();
   renderShelf();
   renderBestNote();
@@ -844,6 +882,7 @@ function speakLetters() {
 $entryForm.addEventListener('submit', submitWord);
 document.getElementById('speak-btn').addEventListener('click', speakLetters);
 document.getElementById('new-round-btn').addEventListener('click', startRound);
+$newChallengeBtn.addEventListener('click', startNewChallenge);
 $roundToggleBtn.addEventListener('click', () => {
   if (roundActive) endRound(); else startRound();
 });
