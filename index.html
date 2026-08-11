@@ -920,23 +920,40 @@ function speakLetters() {
 /* ---------------- Memory game ---------------- */
 // Item generation is pluggable by type (word today; number/color can be added
 // later as further difficulty levels without touching the schema or scoring).
+// The word pools are hand-curated, everyday, concrete nouns rather than the
+// full word-game dictionary, which is optimized for letter-forming and is
+// full of place names, surnames and abbreviations that are a poor fit here.
 const MEMORY_ITEM_COUNT = 6;
+const MEMORY_WORD_POOLS = {
+  easy: [
+    'Baum', 'Blume', 'Wald', 'Berg', 'Fluss', 'Wolke', 'Regen', 'Schnee', 'Wind', 'Blatt',
+    'Gras', 'Stein', 'Sand', 'Feuer', 'Wasser', 'Insel', 'Wiese', 'Wüste', 'Sonne', 'Mond',
+    'Hund', 'Katze', 'Vogel', 'Fisch', 'Pferd', 'Schaf', 'Maus', 'Bär', 'Löwe', 'Tiger',
+    'Affe', 'Ente', 'Huhn', 'Biene', 'Frosch', 'Hase', 'Wolf', 'Fuchs', 'Igel', 'Hirsch',
+    'Wal', 'Schlange', 'Spinne', 'Ameise', 'Schnecke',
+    'Brot', 'Butter', 'Käse', 'Milch', 'Apfel', 'Birne', 'Banane', 'Orange', 'Traube', 'Kartoffel',
+    'Tomate', 'Zwiebel', 'Zucker', 'Salz', 'Pfeffer', 'Honig', 'Kuchen', 'Suppe', 'Reis', 'Nudel',
+    'Wurst', 'Schokolade', 'Marmelade', 'Joghurt',
+    'Tisch', 'Stuhl', 'Bett', 'Lampe', 'Fenster', 'Teppich', 'Spiegel', 'Schrank', 'Regal', 'Kissen',
+    'Decke', 'Vase', 'Besen', 'Eimer', 'Kerze', 'Topf', 'Teller', 'Tasse', 'Gabel', 'Löffel', 'Messer', 'Pfanne',
+    'Hose', 'Hemd', 'Jacke', 'Mantel', 'Schuh', 'Socke', 'Mütze', 'Schal', 'Gürtel', 'Kleid', 'Rock', 'Anzug',
+    'Kopf', 'Hand', 'Auge', 'Ohr', 'Nase', 'Mund', 'Haar', 'Finger', 'Rücken', 'Bauch', 'Herz', 'Schulter', 'Knie',
+    'Auto', 'Zug', 'Bus', 'Fahrrad', 'Boot', 'Schiff', 'Flugzeug', 'Rakete', 'Straße', 'Brücke', 'Bahnhof',
+    'Buch', 'Stift', 'Papier', 'Brief', 'Schlüssel', 'Ball', 'Ring', 'Münze', 'Tasche', 'Koffer',
+    'Schirm', 'Brille', 'Telefon', 'Radio', 'Gitarre', 'Trommel', 'Puppe', 'Drachen', 'Ballon', 'Kamera', 'Zeitung',
+    'Mutter', 'Vater', 'Bruder', 'Schwester', 'Freund', 'Lehrer', 'Koch', 'Bäcker', 'Bauer',
+    'Blitz', 'Donner', 'Nebel', 'Frost', 'Gewitter', 'Regenbogen',
+    'Garten', 'Park', 'Schule', 'Markt', 'Turm', 'Zaun', 'Treppe', 'Keller', 'Dach', 'Kamin',
+  ],
+};
 const MEMORY_LEVELS = {
-  easy: { types: ['word'], wordMinLen: 4, wordMaxLen: 6 },
+  easy: { types: ['word'], wordPool: 'easy' },
 };
 const memoryLevel = 'easy';
 
-function pickMemoryWordPool(minLen, maxLen) {
-  const pool = [];
-  WORDS.forEach(w => {
-    if (w.length >= minLen && w.length <= maxLen && /^[a-zäöüß]+$/.test(w)) pool.push(w);
-  });
-  return pool;
-}
-
 function generateMemoryItems(count) {
   const level = MEMORY_LEVELS[memoryLevel];
-  const pool = pickMemoryWordPool(level.wordMinLen, level.wordMaxLen);
+  const pool = MEMORY_WORD_POOLS[level.wordPool];
   const items = [];
   const usedIdx = new Set();
   while (items.length < count && usedIdx.size < pool.length) {
