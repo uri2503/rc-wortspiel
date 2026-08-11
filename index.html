@@ -282,6 +282,7 @@
   </div>
 
   <div id="memory-view" class="hidden">
+    <div class="player-row" id="memory-player-row"></div>
     <div id="memory-content"></div>
   </div>
 
@@ -1204,6 +1205,7 @@ function renderMemoryPlayerRow() {
 
 function renderMemoryView(errorMessage) {
   if (!$memoryContent) return;
+  renderMemoryPlayerRow();
 
   if (memoryPhase === 'loading') {
     $memoryContent.innerHTML = '<p class="board-empty">Lädt …</p>';
@@ -1218,10 +1220,8 @@ function renderMemoryView(errorMessage) {
       '<p class="memory-prompt"><span class="big">🧠 Gedächtnistraining</span><br>' +
       '<span class="sub">Merk dir ' + itemCount + ' Begriffe' + (limit ? ' in ' + limit + 's' : '') + ', löse eine kurze Zwischenaufgabe und gib sie danach aus dem Gedächtnis wieder ein.</span></p>' +
       (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
-      '<div class="memory-actions"><button class="btn-primary" id="memory-start-btn">Übung starten</button></div>' +
-      '<div id="memory-player-row" class="player-row" style="display:flex;"></div>';
+      '<div class="memory-actions"><button class="btn-primary" id="memory-start-btn">Übung starten</button></div>';
     document.getElementById('memory-start-btn').addEventListener('click', startMemoryExercise);
-    renderMemoryPlayerRow();
     if (player && player.id) {
       refreshPlayerMemoryXp().then(() => { if (memoryPhase === 'idle') renderMemoryPlayerRow(); });
     }
