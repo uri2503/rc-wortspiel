@@ -1,4 +1,4 @@
-<!-- build: 2026-08-11-10 -->
+<!-- build: 2026-08-11-11 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -159,7 +159,7 @@
   .board-section-title { font-family: var(--font-display); font-weight: 600; font-size: 16px; color: var(--ink); margin: 0 0 12px; text-align: center; }
   .board-tabs { display: flex; gap: 6px; justify-content: center; margin-bottom: 16px; flex-wrap: wrap; }
 
-  #play-view.hidden, #board-view.hidden, #memory-view.hidden, #cardmemory-view.hidden, #mahjong-view.hidden, #simon-view.hidden { display: none; }
+  #play-view.hidden, #board-view.hidden, #memory-view.hidden, #cardmemory-view.hidden, #mahjong-view.hidden, #simon-view.hidden, #kim-view.hidden { display: none; }
 
   .memory-items { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; margin-bottom: 22px; }
   .memory-card {
@@ -238,6 +238,18 @@
   .simon-pad.disabled { cursor: default; }
   .simon-status { text-align: center; font-family: var(--font-display); font-weight: 600; font-size: 17px; color: var(--ink); margin-bottom: 16px; min-height: 24px; }
 
+  .kim-candidates { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-bottom: 20px; }
+  .kim-candidate {
+    min-width: 64px; padding: 14px; border-radius: 14px; cursor: pointer;
+    background: var(--tile); border: 2px solid var(--tile-border);
+    box-shadow: 0 3px 0 var(--tile-shadow);
+    font-size: 30px;
+  }
+  .kim-candidate:active { transform: scale(0.95); }
+  .kim-candidate.correct { background: var(--sage-bg); border-color: var(--sage); box-shadow: 0 3px 0 var(--sage); }
+  .kim-candidate.wrong { background: var(--amber-bg); border-color: var(--amber); box-shadow: 0 3px 0 var(--amber); opacity: 0.7; }
+  .kim-candidate.disabled { cursor: default; }
+
   .player-row { display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 14px; color: var(--ink-soft); margin-bottom: 12px; }
   .link-btn { background: none; border: none; color: var(--sage-dark); font-weight: 600; cursor: pointer; font-size: 13px; text-decoration: underline; padding: 0; font-family: var(--font-body); }
 
@@ -271,6 +283,7 @@
     <button class="tab-btn" id="tab-cardmemory">🃏 Karten-Memory</button>
     <button class="tab-btn" id="tab-mahjong">🀄 Mahjong</button>
     <button class="tab-btn" id="tab-simon">🎯 Simon</button>
+    <button class="tab-btn" id="tab-kim">🔍 Was fehlt?</button>
   </div>
 
   <div id="play-view">
@@ -352,6 +365,11 @@
   <div id="simon-view" class="hidden">
     <div class="player-row" id="simon-player-row"></div>
     <div id="simon-content"></div>
+  </div>
+
+  <div id="kim-view" class="hidden">
+    <div class="player-row" id="kim-player-row"></div>
+    <div id="kim-content"></div>
   </div>
 
 </div>
@@ -529,17 +547,20 @@ const $tabMemory = document.getElementById('tab-memory');
 const $tabCardMemory = document.getElementById('tab-cardmemory');
 const $tabMahjong = document.getElementById('tab-mahjong');
 const $tabSimon = document.getElementById('tab-simon');
+const $tabKim = document.getElementById('tab-kim');
 const $playView = document.getElementById('play-view');
 const $boardView = document.getElementById('board-view');
 const $memoryView = document.getElementById('memory-view');
 const $cardMemoryView = document.getElementById('cardmemory-view');
 const $mahjongView = document.getElementById('mahjong-view');
 const $simonView = document.getElementById('simon-view');
+const $kimView = document.getElementById('kim-view');
 const $boardContent = document.getElementById('board-content');
 const $memoryContent = document.getElementById('memory-content');
 const $cardMemoryContent = document.getElementById('cardmemory-content');
 const $mahjongContent = document.getElementById('mahjong-content');
 const $simonContent = document.getElementById('simon-content');
+const $kimContent = document.getElementById('kim-content');
 
 /* ---------------- Rendering ---------------- */
 function renderTiles() {
@@ -2567,6 +2588,353 @@ function renderSimonResult() {
   document.getElementById('simon-retry-btn').addEventListener('click', startSimonExercise);
 }
 
+/* ---------------- Kim's game ("Was fehlt?") ---------------- */
+// A third memory skill: recognition rather than free recall or spatial
+// planning. Memorize a set of items, one gets removed, and you pick out
+// which is missing from a list of candidates (the missing item plus decoys
+// that were never in the set). Shares the "challenge" pattern with the
+// recall/card-flip/mahjong games -- one shared puzzle per difficulty tier,
+// everyone compares on the same set.
+const KIM_ITEM_COUNTS = [5, 6, 8, 10];
+function kimItemCountForLevel(level) { return KIM_ITEM_COUNTS[Math.min(Math.floor((level - 1) / 3), KIM_ITEM_COUNTS.length - 1)]; }
+function kimDecoyCountForLevel(level) { return Math.min(3 + Math.floor((level - 1) / 3), 6); }
+function kimPeekSeconds(itemCount) {
+  if (itemCount <= 6) return null;
+  return itemCount === 8 ? 20 : 15;
+}
+function kimPointsForCorrect(itemCount, decoyCount) { return 15 + itemCount * 3 + decoyCount * 2; }
+
+function generateKimChallenge(itemCount, decoyCount) {
+  const pool = [...CARDMEM_SYMBOLS];
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  const items = pool.slice(0, itemCount);
+  const missingItem = items[Math.floor(Math.random() * itemCount)];
+  const decoys = pool.slice(itemCount, itemCount + decoyCount);
+  const candidates = [missingItem, ...decoys];
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  return { items, missingItem, candidates };
+}
+
+let kimPhase = 'idle'; // idle | loading | memorize | guessing | result
+let kimChallenge = null; // { id, item_count, items, missing_item, candidates }
+let kimTimer = null;
+let kimTimeLeft = null;
+let kimSelectedCandidate = null;
+let kimResultData = null;
+let playerKimXp = 0;
+
+function stopKimTimer() {
+  if (kimTimer) { clearInterval(kimTimer); kimTimer = null; }
+}
+
+async function refreshPlayerKimXp() {
+  if (!sb || !player || !player.id) { playerKimXp = 0; return; }
+  const { data, error } = await sb.from('wortspiel_players').select('kim_xp').eq('id', player.id).maybeSingle();
+  if (error) { console.error(error); return; }
+  playerKimXp = (data && data.kim_xp) || 0;
+}
+
+async function getCurrentKimChallenge(itemCount) {
+  if (!sb) return null;
+  const { data: existing, error: selErr } = await sb.from('wortspiel_kim_challenges')
+    .select('*').eq('item_count', itemCount).order('created_at', { ascending: false }).limit(1).maybeSingle();
+  if (selErr) { console.error(selErr); return null; }
+  if (existing) return existing;
+  return createKimChallenge(itemCount);
+}
+
+async function createKimChallenge(itemCount) {
+  if (!sb) return null;
+  const decoyCount = kimDecoyCountForLevel(memoryLevelFromXp(playerKimXp));
+  const { items, missingItem, candidates } = generateKimChallenge(itemCount, decoyCount);
+  const { data, error } = await sb.from('wortspiel_kim_challenges')
+    .insert({ item_count: itemCount, items, missing_item: missingItem, candidates }).select().maybeSingle();
+  if (error) { console.error(error); return null; }
+  return data;
+}
+
+function startKimMemorizeTimer(seconds) {
+  stopKimTimer();
+  kimTimeLeft = seconds;
+  kimTimer = setInterval(() => {
+    kimTimeLeft--;
+    if (kimTimeLeft <= 0) {
+      proceedToKimGuessing();
+    } else {
+      const $b = document.getElementById('kim-timer-badge');
+      if ($b) $b.textContent = '⏱ ' + kimTimeLeft + 's';
+    }
+  }, 1000);
+}
+
+async function startKimExercise() {
+  stopKimTimer();
+  kimResultData = null;
+  kimSelectedCandidate = null;
+  kimPhase = 'loading';
+  renderKimView();
+  await refreshPlayerKimXp();
+  const itemCount = kimItemCountForLevel(memoryLevelFromXp(playerKimXp));
+  kimChallenge = await getCurrentKimChallenge(itemCount);
+  if (!kimChallenge) {
+    kimPhase = 'idle';
+    renderKimView('Übung konnte nicht geladen werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  kimPhase = 'memorize';
+  renderKimView();
+  const limit = kimPeekSeconds(kimChallenge.item_count);
+  if (limit) startKimMemorizeTimer(limit);
+}
+
+function retryKimExercise() {
+  stopKimTimer();
+  kimSelectedCandidate = null;
+  kimResultData = null;
+  kimPhase = 'memorize';
+  renderKimView();
+  const limit = kimPeekSeconds(kimChallenge.item_count);
+  if (limit) startKimMemorizeTimer(limit);
+}
+
+async function startNewKimExercise() {
+  if (!sb) return;
+  const ok = window.confirm('Neue Runde mit neuen Gegenständen starten? Alle, die ab jetzt mitspielen, bekommen diese neue Runde statt der bisherigen.');
+  if (!ok) return;
+  stopKimTimer();
+  kimPhase = 'loading';
+  renderKimView();
+  await refreshPlayerKimXp();
+  const itemCount = kimItemCountForLevel(memoryLevelFromXp(playerKimXp));
+  const created = await createKimChallenge(itemCount);
+  if (!created) {
+    kimPhase = 'idle';
+    renderKimView('Neue Runde konnte nicht erstellt werden. Prüfe deine Internetverbindung.');
+    return;
+  }
+  kimChallenge = created;
+  kimSelectedCandidate = null;
+  kimResultData = null;
+  kimPhase = 'memorize';
+  renderKimView();
+  const limit = kimPeekSeconds(kimChallenge.item_count);
+  if (limit) startKimMemorizeTimer(limit);
+}
+
+function proceedToKimGuessing() {
+  stopKimTimer();
+  kimPhase = 'guessing';
+  renderKimView();
+}
+
+async function submitKimGuess(candidate) {
+  stopKimTimer();
+  kimSelectedCandidate = candidate;
+  const correct = candidate === kimChallenge.missing_item;
+  const itemCount = kimChallenge.item_count;
+  const decoyCount = kimChallenge.candidates.length - 1;
+  const roundPoints = correct ? kimPointsForCorrect(itemCount, decoyCount) : 0;
+
+  kimPhase = 'loading';
+  renderKimView();
+
+  const p = await ensurePlayer();
+  let plays = [];
+  let xpGained = 0;
+  let overallBoard = [];
+  if (p) {
+    const { data: existing } = await sb.from('wortspiel_kim_plays')
+      .select('*').eq('challenge_id', kimChallenge.id).eq('player_id', p.id).maybeSingle();
+    if (!existing || roundPoints > existing.points) {
+      const row = {
+        challenge_id: kimChallenge.id, player_id: p.id, nickname: p.nickname,
+        correct, points: roundPoints, player_level: memoryLevelFromXp(playerKimXp),
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await sb.from('wortspiel_kim_plays')
+        .upsert(row, { onConflict: 'challenge_id,player_id' });
+      if (error) console.error(error);
+      xpGained = roundPoints - (existing ? existing.points : 0);
+      if (xpGained > 0) {
+        const newXp = playerKimXp + xpGained;
+        const { error: xpErr } = await sb.from('wortspiel_players').update({ kim_xp: newXp }).eq('id', p.id);
+        if (xpErr) console.error(xpErr); else playerKimXp = newXp;
+      }
+    }
+    const { data } = await sb.from('wortspiel_kim_plays')
+      .select('*').eq('challenge_id', kimChallenge.id).order('points', { ascending: false });
+    plays = data || [];
+    const { data: boardData } = await sb.from('wortspiel_players')
+      .select('id,nickname,kim_xp').gt('kim_xp', 0).order('kim_xp', { ascending: false }).limit(10);
+    overallBoard = boardData || [];
+  }
+
+  kimResultData = { correct, roundPoints, xpGained, plays, overallBoard, saved: !!p };
+  kimPhase = 'result';
+  renderKimView();
+}
+
+function renderKimPlayerRow() {
+  const $row = document.getElementById('kim-player-row');
+  if (!$row) return;
+  if (player && player.nickname) {
+    const lvl = memoryLevelFromXp(playerKimXp);
+    const toNext = memoryXpForLevel(lvl + 1) - playerKimXp;
+    $row.innerHTML = '👤 ' + escapeHtml(player.nickname) +
+      ' <span class="pill-btn" style="cursor:default;padding:4px 12px;font-size:13px;" title="noch ' + toNext + ' XP bis Level ' + (lvl + 1) + '">🏅 Level ' + lvl + ' · ' + playerKimXp + ' XP</span>' +
+      ' <button type="button" class="link-btn" id="kim-change-nickname-btn">Spitzname ändern</button>';
+  } else {
+    $row.innerHTML = 'Noch kein Spitzname gewählt <button type="button" class="link-btn" id="kim-change-nickname-btn">Spitzname wählen</button>';
+  }
+  document.getElementById('kim-change-nickname-btn').addEventListener('click', async () => {
+    await renameNickname();
+    await refreshPlayerKimXp();
+    renderKimPlayerRow();
+  });
+}
+
+function renderKimView(errorMessage) {
+  if (!$kimContent) return;
+  renderKimPlayerRow();
+
+  if (kimPhase === 'loading') {
+    $kimContent.innerHTML = '<p class="board-empty">Lädt …</p>';
+    return;
+  }
+
+  if (kimPhase === 'idle') {
+    const lvl = memoryLevelFromXp(playerKimXp);
+    const itemCount = kimItemCountForLevel(lvl);
+    const limit = kimPeekSeconds(itemCount);
+    $kimContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">🔍 Was fehlt?</span><br>' +
+      '<span class="sub">Präg dir ' + itemCount + ' Gegenstände ein' + (limit ? ' in ' + limit + 's' : '') + '. Danach fehlt einer davon — erkenne, welcher.</span></p>' +
+      (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
+      '<div class="memory-actions"><button class="btn-primary" id="kim-start-btn">Übung starten</button></div>';
+    document.getElementById('kim-start-btn').addEventListener('click', startKimExercise);
+    if (player && player.id) {
+      refreshPlayerKimXp().then(() => { if (kimPhase === 'idle') renderKimPlayerRow(); });
+    }
+    return;
+  }
+
+  if (!kimChallenge) { $kimContent.innerHTML = '<p class="board-empty">Keine aktive Übung.</p>'; return; }
+
+  if (kimPhase === 'memorize') {
+    const limit = kimPeekSeconds(kimChallenge.item_count);
+    const cards = kimChallenge.items.map(item => '<div class="memory-card">' + item + '</div>').join('');
+    $kimContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Präg dir diese ' + kimChallenge.items.length + ' Gegenstände ein</span><br>' +
+      '<span class="sub">' + (limit ? 'Die Zeit läuft – schau genau hin.' : 'Nimm dir so viel Zeit, wie du brauchst.') + '</span></p>' +
+      (limit ? '<div class="timer-badge" id="kim-timer-badge" style="margin:0 auto 14px;justify-content:center;">⏱ ' + kimTimeLeft + 's</div>' : '') +
+      '<div class="memory-items">' + cards + '</div>' +
+      '<div class="memory-actions"><button class="btn-primary" id="kim-memorized-btn">✅ Ich hab sie mir gemerkt</button></div>';
+    document.getElementById('kim-memorized-btn').addEventListener('click', proceedToKimGuessing);
+    return;
+  }
+
+  if (kimPhase === 'guessing') {
+    const remaining = kimChallenge.items.filter(s => s !== kimChallenge.missing_item);
+    const remainingCards = remaining.map(item => '<div class="memory-card">' + item + '</div>').join('');
+    const candidateButtons = kimChallenge.candidates.map(sym =>
+      '<button type="button" class="kim-candidate" data-sym="' + escapeHtml(sym) + '">' + sym + '</button>'
+    ).join('');
+    $kimContent.innerHTML =
+      '<p class="memory-prompt"><span class="big">Was fehlt?</span><br>' +
+      '<span class="sub">Das ist jetzt übrig — welcher der folgenden Gegenstände war vorhin dabei, fehlt aber jetzt?</span></p>' +
+      '<div class="memory-items">' + remainingCards + '</div>' +
+      '<div class="kim-candidates">' + candidateButtons + '</div>';
+    Array.from($kimContent.querySelectorAll('.kim-candidate')).forEach($c => {
+      $c.addEventListener('click', () => submitKimGuess($c.dataset.sym));
+    });
+    return;
+  }
+
+  if (kimPhase === 'result') {
+    renderKimResult();
+    return;
+  }
+}
+
+function renderKimResult() {
+  const { correct, roundPoints, xpGained, plays, overallBoard, saved } = kimResultData;
+  const myLevel = memoryLevelFromXp(playerKimXp);
+
+  const rankIdx = player ? plays.findIndex(p => p.player_id === player.id) : -1;
+  const rank = rankIdx >= 0 ? rankIdx + 1 : null;
+  const better = rankIdx >= 0 ? plays.filter(p => p.points < plays[rankIdx].points).length : 0;
+  const pctBetter = plays.length > 1 ? Math.round(better / (plays.length - 1) * 100) : (plays.length === 1 ? 100 : null);
+
+  let statBoxes = '<div class="stat-box"><div class="num">' + (correct ? '✅' : '❌') + '</div><div class="lbl">' + (correct ? 'Richtig erkannt' : 'Leider falsch') + '</div></div>';
+  if (saved) {
+    statBoxes += '<div class="stat-box"><div class="num">+' + roundPoints + '</div><div class="lbl">' + (xpGained > 0 ? 'Punkte (davon +' + xpGained + ' XP)' : 'Punkte') + '</div></div>';
+    statBoxes += '<div class="stat-box"><div class="num">🏅 ' + myLevel + '</div><div class="lbl">' + playerKimXp + ' XP gesamt</div></div>';
+  }
+  if (saved && plays.length > 0) {
+    statBoxes += '<div class="stat-box"><div class="num">' + (rank ? '#' + rank : '–') + '</div><div class="lbl">Platz von ' + plays.length + ' Spieler' + (plays.length === 1 ? '' : 'n') + '</div></div>';
+    if (pctBetter !== null) {
+      statBoxes += '<div class="stat-box"><div class="num">' + pctBetter + '%</div><div class="lbl">der Mitspieler geschlagen</div></div>';
+    }
+  }
+
+  const candidateReveal = kimChallenge.candidates.map(sym => {
+    const isMissing = sym === kimChallenge.missing_item;
+    const isSelected = sym === kimSelectedCandidate;
+    const cls = 'kim-candidate disabled' + (isMissing ? ' correct' : (isSelected ? ' wrong' : ''));
+    return '<button type="button" class="' + cls + '" disabled>' + sym + '</button>';
+  }).join('');
+
+  const rows = plays.map((e, i) => {
+    const own = player && e.player_id === player.id;
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main"><div class="board-score">' + escapeHtml(e.nickname) + ' · ' + (e.correct ? '✅' : '❌') + ' · ' + e.points + ' Pkt</div></div>' +
+    '</div>';
+  }).join('');
+
+  const overallRows = (overallBoard || []).map((e, i) => {
+    const own = player && e.id === player.id;
+    const lvl = memoryLevelFromXp(e.kim_xp || 0);
+    return '<div class="board-row' + (own ? ' own' : '') + '">' +
+      '<div class="board-rank">' + (i + 1) + '</div>' +
+      '<div class="board-main">' +
+        '<div class="board-score">' + escapeHtml(e.nickname) + ' · 🏅 Level ' + lvl + '</div>' +
+        '<div class="board-meta">' + (e.kim_xp || 0) + ' XP gesamt</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+
+  $kimContent.innerHTML =
+    '<div class="shelf">' +
+      '<p class="resolution-title">🔍 Ergebnis</p>' +
+      '<div class="stat-grid">' + statBoxes + '</div>' +
+      '<p class="shelf-title" style="display:block; margin-bottom:8px;">Der fehlende Gegenstand war:</p>' +
+      '<div class="kim-candidates">' + candidateReveal + '</div>' +
+    '</div>' +
+    (saved ? '' : '<p class="resolution-sub" style="text-align:center;">Ohne Spitzname wird dein Ergebnis nicht in der Bestenliste gespeichert.</p>') +
+    '<div class="memory-actions">' +
+      '<button class="btn-primary" id="kim-retry-btn">Nochmal versuchen (gleiche Gegenstände)</button>' +
+      '<button class="pill-btn" id="kim-new-btn">🆕 Neue Gegenstände starten</button>' +
+    '</div>' +
+    '<p class="board-section-title" style="margin-top:24px;">🏆 Rangliste dieser Übung</p>' +
+    (plays.length === 0
+      ? '<p class="board-empty">Noch keine Ergebnisse.</p>'
+      : '<div class="board-list">' + rows + '</div>') +
+    '<p class="board-section-title" style="margin-top:28px;">🏅 Gesamtrangliste · Level</p>' +
+    (overallRows === ''
+      ? '<p class="board-empty">Noch keine Punkte gesammelt.</p>'
+      : '<div class="board-list">' + overallRows + '</div>');
+
+  document.getElementById('kim-retry-btn').addEventListener('click', retryKimExercise);
+  document.getElementById('kim-new-btn').addEventListener('click', startNewKimExercise);
+}
+
 /* ---------------- Event wiring ---------------- */
 $entryForm.addEventListener('submit', submitWord);
 document.getElementById('speak-btn').addEventListener('click', speakLetters);
@@ -2605,6 +2973,7 @@ const TABS = [
   { btn: $tabCardMemory, view: $cardMemoryView },
   { btn: $tabMahjong, view: $mahjongView },
   { btn: $tabSimon, view: $simonView },
+  { btn: $tabKim, view: $kimView },
 ];
 function switchTab(index) {
   TABS.forEach((t, i) => {
@@ -2613,11 +2982,13 @@ function switchTab(index) {
   });
   if (index !== 4) stopMahjongTimer();
   if (index !== 5) stopSimonTimer();
+  if (index !== 6) stopKimTimer();
   if (index === 1) renderBoard();
   if (index === 2) renderMemoryView();
   if (index === 3) renderCardMemoryView();
   if (index === 4) renderMahjongView();
   if (index === 5) renderSimonView();
+  if (index === 6) renderKimView();
 }
 $tabPlay.addEventListener('click', () => switchTab(0));
 $tabBoard.addEventListener('click', () => switchTab(1));
@@ -2625,6 +2996,7 @@ $tabMemory.addEventListener('click', () => switchTab(2));
 $tabCardMemory.addEventListener('click', () => switchTab(3));
 $tabMahjong.addEventListener('click', () => switchTab(4));
 $tabSimon.addEventListener('click', () => switchTab(5));
+$tabKim.addEventListener('click', () => switchTab(6));
 
 /* ---------------- Init ---------------- */
 renderSettings();
