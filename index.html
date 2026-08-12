@@ -1,4 +1,4 @@
-<!-- build: 2026-08-12-2 -->
+<!-- build: 2026-08-12-3 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -3867,7 +3867,14 @@ function switchTab(index) {
     t.view.classList.toggle('hidden', i !== index);
   });
   if (index !== 4) stopMahjongTimer();
-  if (index !== 5) stopSimonTimer();
+  if (index !== 5) {
+    // 'showing'/'roundcomplete' are purely timer-driven with no manual
+    // continue button (unlike the memorize-timer phases in the other
+    // games) -- cancelling the timer without resetting the phase would
+    // freeze the game on that frame forever once the player comes back.
+    if (simonPhase === 'showing' || simonPhase === 'roundcomplete') simonPhase = 'idle';
+    stopSimonTimer();
+  }
   if (index !== 6) stopKimTimer();
   if (index !== 7) stopPalaceTimer();
   if (index !== 8) stopSlfTimer();
