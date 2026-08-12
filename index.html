@@ -1,4 +1,4 @@
-<!-- build: 2026-08-12-3 -->
+<!-- build: 2026-08-12-4 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -3502,6 +3502,40 @@ function scoreSlfAnswers(challenge, answers, otherPlays) {
   return { results, total };
 }
 
+// Crowdsourced, self-correcting word list: a word only counts as "trusted"
+// once at least two *distinct* players have independently typed it for the
+// same category (tracked across all rounds, not just this one), so a
+// single dishonest or mistyped answer can never bootstrap itself into the
+// list -- it takes two people actually agreeing. Trusted answers earn a
+// small bonus on top of the normal uniqueness scoring. Only applied on a
+// fresh submission (not when revisiting an already-answered challenge),
+// so the stored total always matches what's displayed.
+async function applySlfTrustBonuses(categoryResults, playerId) {
+  let bonusTotal = 0;
+  for (const r of categoryResults) {
+    if (!r.valid) continue;
+    const wordKey = r.answer.trim().toLowerCase();
+    const { data: known, error: selErr } = await sb.from('wortspiel_slf_known_words')
+      .select('*').eq('category', r.category).eq('word', wordKey).maybeSingle();
+    if (selErr) { console.error(selErr); continue; }
+    const contributors = (known && known.contributor_ids) || [];
+    if (contributors.length >= 2) {
+      r.trusted = true;
+      r.points += 5;
+      bonusTotal += 5;
+    }
+    if (playerId && !contributors.includes(playerId)) {
+      const updatedContributors = [...contributors, playerId];
+      const { error } = await sb.from('wortspiel_slf_known_words').upsert({
+        category: r.category, word: wordKey, display_word: r.answer,
+        contributor_ids: updatedContributors, updated_at: new Date().toISOString(),
+      }, { onConflict: 'category,word' });
+      if (error) console.error(error);
+    }
+  }
+  return bonusTotal;
+}
+
 let slfPhase = 'idle'; // idle | loading | filling | result
 let slfChallenge = null; // { id, category_count, letter, categories }
 let slfTimer = null;
@@ -3646,7 +3680,8 @@ async function submitSlfAnswers(auto) {
     const others = otherPlaysData || [];
     const scored = scoreSlfAnswers(slfChallenge, answers, others);
     categoryResults = scored.results;
-    totalPoints = scored.total;
+    const trustBonus = await applySlfTrustBonuses(categoryResults, p.id);
+    totalPoints = scored.total + trustBonus;
 
     const row = {
       challenge_id: slfChallenge.id, player_id: p.id, nickname: p.nickname,
@@ -3711,7 +3746,7 @@ function renderSlfView(errorMessage) {
     const seconds = slfTimeSeconds(categoryCount);
     $slfContent.innerHTML =
       '<p class="memory-prompt"><span class="big">🗺️ Stadt, Land, Fluss</span><br>' +
-      '<span class="sub">Ein Buchstabe, ' + categoryCount + ' Kategorien (' + escapeHtml(categories.join(', ')) + '), ' + seconds + 's Zeit. Einzigartige gültige Antworten bringen mehr Punkte als welche, die auch andere hatten.</span></p>' +
+      '<span class="sub">Ein Buchstabe, ' + categoryCount + ' Kategorien (' + escapeHtml(categories.join(', ')) + '), ' + seconds + 's Zeit. Einzigartige gültige Antworten bringen mehr Punkte als welche, die auch andere hatten. Wörter, die zwei verschiedene Spieler schon mal eingegeben haben, gelten als bestätigt und bringen einen Extra-Bonus.</span></p>' +
       (errorMessage ? '<p style="text-align:center; color:var(--amber);">' + escapeHtml(errorMessage) + '</p>' : '') +
       buildSlfTierTable(lvl) +
       '<div class="memory-actions"><button class="btn-primary" id="slf-start-btn">Übung starten</button></div>';
@@ -3769,7 +3804,8 @@ function renderSlfResult() {
 
   const catRows = categoryResults.map(r => {
     const cls = 'slf-result-row' + (r.valid ? '' : ' invalid');
-    const label = !r.valid ? (r.answer ? 'ungültig' : 'leer') : (r.unique ? '★ einzigartig +' + r.points : 'geteilt +' + r.points);
+    const trustedMark = r.trusted ? ' ✓ bestätigt' : '';
+    const label = !r.valid ? (r.answer ? 'ungültig' : 'leer') : ((r.unique ? '★ einzigartig' : 'geteilt') + trustedMark + ' +' + r.points);
     return '<div class="' + cls + '">' +
       '<span class="slf-cat">' + escapeHtml(r.category) + '</span>' +
       '<span class="slf-ans">' + (r.answer ? escapeHtml(r.answer) : '—') + '</span>' +
