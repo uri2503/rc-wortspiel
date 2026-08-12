@@ -1,4 +1,4 @@
-<!-- build: 2026-08-12-1 -->
+<!-- build: 2026-08-12-2 -->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -3480,7 +3480,11 @@ function buildSlfTierTable(currentLevel) {
 }
 function slfIsValidAnswer(letter, answer) {
   const trimmed = (answer || '').trim();
-  return trimmed.length > 0 && trimmed[0].toUpperCase() === letter.toUpperCase();
+  // Require at least 2 characters so just typing the letter itself (or
+  // mashing it a few times) can't trivially score -- there's still no
+  // gazetteer to check the word is real, but this rules out the emptiest
+  // possible cheese.
+  return trimmed.length >= 2 && trimmed[0].toUpperCase() === letter.toUpperCase();
 }
 
 function scoreSlfAnswers(challenge, answers, otherPlays) {
